@@ -1,7 +1,7 @@
 venv
 .env
 __pycache__
-data_collection/.idea
+.idea
 Datentest.txt
 error_log.txt
 errors.log
