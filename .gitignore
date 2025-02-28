@@ -1,0 +1,9 @@
+venv
+.env
+__pycache__
+data_collection/.idea
+Datentest.txt
+error_log.txt
+errors.log
+*.sqlite
+*.sqlite-journal
