@@ -95,6 +95,10 @@ class DataHandler:
                     expiration_date_obj = datetime.strptime(expiration_date, date_format)
                     remaining_time = int((expiration_date_obj - date_obj).days)
 
+                    # Ausschluss von Einträgen mit remaining_time == 0
+                    if remaining_time == 0:
+                        continue  # Überspringt diesen Datensatz
+
                     raw_cursor.execute("SELECT close FROM index_data WHERE date = ?", (date,))
                     market_price_base = raw_cursor.fetchone()
                     market_price_base = market_price_base[0] if market_price_base else None

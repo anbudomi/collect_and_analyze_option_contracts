@@ -432,58 +432,70 @@ class SqliteDatabaseRepository(CollectionDatabaseRepository):
         print("All tables have been dropped.")
 
     def insert_data_of_index(self, data, ticker):
-        # Falls die Spalten ein MultiIndex sind, flache sie ab, indem du Level 0 (Attributnamen) verwendest.
+        print(f"📊 Typ von `data` direkt nach Funktionsaufruf: {type(data)}")
+        print(f"📊 Erste Zeichen von `data`, falls String: {data[:100] if isinstance(data, str) else 'Kein String'}")
+
+        # ✅ Sicherstellen, dass `data` existiert und ein DataFrame ist
+        if not isinstance(data, pd.DataFrame):
+            print(f"❌ Fehler: `data` ist kein DataFrame! Stattdessen: {type(data)}")
+            return
+
+        # ✅ Falls `data` ein MultiIndex hat, entferne die zweite Ebene
         if isinstance(data.columns, pd.MultiIndex):
-            data.columns = data.columns.get_level_values(0)
+            print("⚠ MultiIndex erkannt – Entferne zweite Ebene...")
+            data.columns = data.columns.droplevel(1)
 
-        # Wenn das Datum im Index steckt, in eine Spalte umwandeln.
-        if 'Date' not in data.columns:
+        # ✅ Falls das Datum im Index steckt, als Spalte speichern
+        if 'Date' not in data.columns and 'Datetime' not in data.columns:
             data = data.reset_index()
-            # Falls der ursprüngliche Index keinen Namen hatte, heißt die neue Spalte "index".
-            if 'Date' not in data.columns:
-                data.rename(columns={"index": "Date"}, inplace=True)
 
-        # Debug-Ausgabe: Zeige die Spaltennamen
-        print("Spalten nach reset_index:", data.columns)
+        # ✅ Falls `Datetime` vorhanden ist, benenne sie in `Date` um
+        if 'Datetime' in data.columns:
+            data.rename(columns={'Datetime': 'Date'}, inplace=True)
+
+        # ✅ Sicherstellen, dass alle benötigten Spalten vorhanden sind
+        required_columns = ["Date", "Close", "High", "Low", "Open", "Volume"]
+        missing_columns = [col for col in required_columns if col not in data.columns]
+
+        if missing_columns:
+            print(f"❌ Fehlende Spalten in `data`: {missing_columns}")
+            return  # Falls Spalten fehlen, abbrechen
+
+        # ✅ Debugging: Zeige die aktuellen Spaltennamen und erste Zeilen
+        print("📊 Spalten nach Anpassung:", data.columns)
+        print("📊 Erste Zeilen vor DB-Insert:")
+        print(data.head())
 
         c = self.connection.cursor()
 
         for _, row in data.iterrows():
-            # Datum in einen String umwandeln (falls es ein Timestamp ist)
-            if hasattr(row['Date'], 'strftime'):
-                date_str = row['Date'].strftime('%Y-%m-%d')
-            else:
-                date_str = str(row['Date'])
-
-            # Zugriff auf die einzelnen Spaltenwerte als skalare Werte
-            close_val = row["Close"]
-            high_val = row["High"]
-            low_val = row["Low"]
-            open_val = row["Open"]
-            volume_val = row["Volume"]
-
-            values = (
-                ticker,  # ticker (String)
-                date_str,  # Datum als String
-                close_val,  # Schlusskurs
-                high_val,  # Tageshoch
-                low_val,  # Tagestief
-                open_val,  # Eröffnungskurs
-                volume_val  # Handelsvolumen
-            )
-
-            print("Einfügen:", values)
-
-            # Beispielhafte SQL-Abfrage – passe die Tabelle und Platzhalter an deine Datenbank an
-            sql = ("INSERT INTO index_data "
-                   "(ticker, date, close, high, low, open, volume) "
-                   "VALUES (?, ?, ?, ?, ?, ?, ?)")
             try:
+                # ✅ Sicherstellen, dass `Date` im richtigen Format ist
+                date_str = row["Date"].strftime('%Y-%m-%d') if hasattr(row["Date"], 'strftime') else str(row["Date"])
+
+                # ✅ Sichere Abfrage von Werten
+                values = (
+                    ticker,
+                    date_str,
+                    row.get("Close", None),
+                    row.get("High", None),
+                    row.get("Low", None),
+                    row.get("Open", None),
+                    row.get("Volume", None)
+                )
+
+                print("📊 Einfügen in DB:", values)
+
+                # ✅ SQL-Query für den Datenbank-Insert
+                sql = ("INSERT INTO index_data (ticker, date, close, high, low, open, volume) "
+                       "VALUES (?, ?, ?, ?, ?, ?, ?)")
+
                 c.execute(sql, values)
                 self.connection.commit()
-                print("Daten erfolgreich eingefügt.")
+                print("✅ Daten erfolgreich eingefügt.")
+
             except Exception as e:
-                print("Fehler beim Einfügen der Daten:", e)
+                print(f"❌ Fehler beim Einfügen von {values}: {e}")
                 self.connection.rollback()
 
         self.connection.commit()

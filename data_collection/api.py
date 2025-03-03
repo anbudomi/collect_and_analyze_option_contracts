@@ -10,6 +10,7 @@ import asyncio
 import aiohttp
 import datetime
 import logging
+import pandas as pd
 
 db_queue = Queue()
 
@@ -483,6 +484,7 @@ class PolygonApiClient:
     # ----------------------------------------------------------------
 
     #region Datensammlung von Yfinance-Daten : Close-Werte des angegebenen Index und implizite Volatilität
+
     def fetch_yfinance_data(self, ticker, start_date, end_date, insert_func):
         """
         Holt Daten von Yahoo Finance und speichert sie mit einer definierten Insert-Funktion.
@@ -495,23 +497,64 @@ class PolygonApiClient:
                 print(f"📊 Fetching data for {ticker}... (Try {attempt + 1}/{max_retries})")
                 data = yf.download(ticker, start=start_date, end=end_date, progress=False)
 
+                # ✅ Sicherstellen, dass `data` ein DataFrame ist
+                if not isinstance(data, pd.DataFrame):
+                    print(f"⚠️ Fehler: `yf.download()` hat unerwartete Daten zurückgegeben. Inhalt:")
+                    print(data)  # Debugging-Ausgabe
+                    raise ValueError("yfinance returned a non-DataFrame object")
+
+                # ✅ Sicherstellen, dass `data` Spalten hat
                 if data.empty:
                     print(f"⚠️ Keine Daten für {ticker} erhalten. Erneuter Versuch...")
                     raise ValueError("Empty Data")
 
-                data.reset_index(inplace=True)
-                insert_func(ticker, data)  # Daten in DB speichern
+                # ✅ Daten formatieren
+                formatted_data = self.format_yfinance_data(data)
+
+                if not isinstance(formatted_data, pd.DataFrame):
+                    print(f"❌ Fehler: `format_yfinance_data()` hat kein DataFrame zurückgegeben!")
+                    raise ValueError("format_yfinance_data returned a non-DataFrame object")
+
+                if formatted_data.empty:
+                    print(f"⚠️ Keine formatierbaren Daten für {ticker} erhalten. Erneuter Versuch...")
+                    raise ValueError("Formatted Data Empty")
+
+                # ✅ Index zurücksetzen
+                formatted_data.reset_index(inplace=True)
+
+                # ✅ Daten in die DB einfügen
+                insert_func(formatted_data, ticker)
                 print(f"✅ Daten gespeichert für {ticker}")
                 return
 
             except Exception as e:
                 if "Too Many Requests" in str(e) or "Empty Data" in str(e):
-                    print(f"⏳ Warte {wait_time} Sekunden wegen Rate-Limit...")
+                    print(f"⏳ Warte {wait_time} Sekunden wegen Rate-Limit oder leeren Daten...")
                     time.sleep(wait_time)
                     wait_time *= 2  # Exponentielles Warten
                 else:
                     print(f"❌ Fehler für {ticker}: {e}")
                     break  # Kein erneuter Versuch bei anderen Fehlern
+
+    #Der alte Stand hat ohne diese Funktion funktioniert, allerdings hat YahooFinance ihre API verändert
+    def format_yfinance_data(self, input_df):
+        # ✅ Falls MultiIndex vorhanden ist, entferne die erste Ebene ("Price")
+        if isinstance(input_df.columns, pd.MultiIndex):
+            input_df.columns = input_df.columns.droplevel(1)  # Entferne die "Ticker"-Ebene
+
+        # ✅ Index zurücksetzen, damit das Datum eine Spalte wird
+        input_df = input_df.reset_index()
+
+        # ✅ Spaltennamen normalisieren (yfinance verwendet manchmal "Date" statt "Datetime")
+        if "Date" in input_df.columns:
+            input_df.rename(columns={"Date": "Datetime"}, inplace=True)
+
+        # ✅ Nur relevante Spalten behalten
+        required_columns = ["Datetime", "Open", "High", "Low", "Close", "Volume"]
+        available_columns = [col for col in required_columns if col in input_df.columns]
+
+        return input_df[available_columns]  # Rückgabe nur der relevanten Daten
+
     #endregion
 
     #region Datensammlung von FRED-Daten : Sammelt Zins-Daten
