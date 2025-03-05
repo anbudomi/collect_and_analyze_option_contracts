@@ -4,7 +4,7 @@ import dotenv
 import datetime
 import asyncio
 from data_collection.database import DatabaseType
-from data_analysis.datahandling import DataHandler, DataAnalyzer
+from data_analysis.datahandling import DataHandler, DataAnalyzer, DataPreparer
 from data_collection.api import PolygonApiClient
 from data_collection.database import get_collection_database_repository
 from data_analysis.database import get_analysis_database_repository
@@ -13,6 +13,11 @@ from data_analysis.database import get_analysis_database_repository
 dotenv.load_dotenv()
 
 
+# ----------------------------------------------------------------
+# 1) Helfer-Funktionen und Logging
+# ----------------------------------------------------------------
+
+#region 1) Helfer-Funktionen und Logging
 def parse_boolean(value):
     """Wandelt String in Boolean um."""
     if isinstance(value, bool):
@@ -25,28 +30,45 @@ def parse_boolean(value):
         raise ValueError(f"Cannot parse '{value}' as a boolean.")
 
 
-def setup_logging():
-    """Initialisiert das Logging und speichert es im 'error_logging'-Ordner."""
+def setup_logging(log_level=logging.INFO):
+    """Initialisiert das Logging und speichert es im 'error_logging'-Ordner (falls Schreibrechte vorhanden)."""
     script_dir = os.path.dirname(os.path.abspath(__file__))
     log_directory = os.path.join(script_dir, "error_logging")  # Neuer Ordner für Logs
-    os.makedirs(log_directory, exist_ok=True)  # Falls nicht vorhanden, erstellen
-    log_path = os.path.join(log_directory, "error_log.txt")  # Log-Datei
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format='[%(asctime)s] %(levelname)s: %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S',
-        handlers=[
-            logging.FileHandler(log_path, encoding='utf-8'),  # Datei-Logging in UTF-8
-            logging.StreamHandler()  # Konsolen-Logging
-        ]
-    )
+    log_path = None
+    try:
+        os.makedirs(log_directory, exist_ok=True)  # Falls nicht vorhanden, erstellen
+        log_path = os.path.join(log_directory, "error_log.txt")  # Log-Datei
+    except Exception as e:
+        print(f"⚠️ Konnte Log-Verzeichnis nicht erstellen: {e}")
 
     logger = logging.getLogger(__name__)
-    logger.info("Logging initialized.")
-    print(f"Logging initialized. Log file at: {log_path}")
-    return logger
+    logger.setLevel(log_level)
 
+    formatter = logging.Formatter('[%(asctime)s] %(levelname)s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+
+    # Verhindert doppelte Handler in Multi-Threading/Multi-Process-Umgebungen
+    if not logger.hasHandlers():
+        # Konsolen-Logging
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
+
+        # Datei-Logging (falls möglich)
+        if log_path:
+            try:
+                file_handler = logging.FileHandler(log_path, encoding='utf-8')
+                file_handler.setFormatter(formatter)
+                logger.addHandler(file_handler)
+            except Exception as e:
+                logger.warning(f"⚠️ Datei-Logging deaktiviert: {e}")
+
+    logger.info("🔹 Logging erfolgreich initialisiert.")
+    if log_path:
+        print(f"📄 Log-Datei: {log_path}")
+    else:
+        print("⚠️ Logging wird nur in der Konsole ausgegeben.")
+    return logger
 
 # Mapping aus der .env einlesen und in Dicts umwandeln
 def parse_env_mapping(env_var):
@@ -59,20 +81,21 @@ def parse_env_mapping(env_var):
             mapping[key.strip().upper()] = value.strip()
     return mapping
 
-
 async def run_aggregates(client):
     await client.fetch_and_store_aggregates_async()
-
+#endregion
 
 def main():
     """Hauptfunktion des Skripts."""
+
+    #initiiert logger
     logger = setup_logging()
 
-    ############################
-    # Aufrufe für Datensammlung:
-    ############################
+    # ----------------------------------------------------------------
+    # 2) Aufruf Datensammlung
+    # ----------------------------------------------------------------
 
-    #region Aufruf für data_collection : Führt die Datensammlung aus
+    #region 2) Aufruf Datensammlung
     if parse_boolean(os.getenv('RUN_DATA_COLLECTION')):
 
         # Mappings für Index- und Volatilitätsdaten aus der .env-Datei
@@ -86,6 +109,34 @@ def main():
         # Erstelle für jeden Ticker ein eigenes Datenbank-Repository
         db_repositories = get_collection_database_repository(DatabaseType.SQLITE)
 
+        # ----------------------------------------------------------------
+        # 2.1) Debugging Helfer-Funktion, um Tabellen zu entfernen
+        # ----------------------------------------------------------------
+
+        #region 2.1) Debugging Helfer-Funktion, um Tabellen zu entfernen
+        if parse_boolean(os.getenv('RUN_DROP_TABLES', "false")):
+            target_dbs = os.getenv('TARGET_DB', "").replace(" ", "").split(",")
+            tables_to_drop = os.getenv('TABLES_TO_DROP', "").replace(" ", "").split(",")
+
+            # Extrahiere alle Datenbankpfade aus den db_repositories
+            db_paths = [repo.filename for repo in db_repositories.values() if hasattr(repo, 'filename')]
+
+            # Falls eine explizite Liste von Datenbanken in .env angegeben ist, verwende diese stattdessen
+            if target_dbs and target_dbs[0]:  # Falls nicht leer
+                db_paths = target_dbs
+
+            if db_paths and tables_to_drop:
+                print(f"🔴 Lösche Tabellen {tables_to_drop} in den Datenbanken {db_paths}...")
+                list(db_repositories.values())[0].drop_tables(db_paths, tables_to_drop)  # Irgendeine Instanz nutzen
+            else:
+                print("⚠️ `RUN_DROP_TABLES` ist aktiviert, aber `TARGET_DB` oder `TABLES_TO_DROP` ist nicht definiert.")
+        #endregion
+
+        # ----------------------------------------------------------------
+        # 2.2) Iteration über alle angegebenen Ticker
+        # ----------------------------------------------------------------
+
+        #region 2.2) Iteration über alle angegebenen Ticker
         for underlying_ticker in underlying_tickers:
             # Richtige Werte für Index und Volatilität aus der .env holen
             index_ticker = index_data_mapping.get(underlying_ticker, None)
@@ -101,6 +152,8 @@ def main():
             end_date = datetime.datetime.strptime(os.getenv('POLYGON_END_DATE'), "%Y-%m-%d")
 
             # ✅ **Client wird nur EINMAL pro `underlying_ticker` erstellt!**
+
+            #region Initialisierung Client
             client = PolygonApiClient(
                 api_key=os.getenv('POLYGON_API_KEY'),
                 limit=os.getenv('POLYGON_LIMIT'),
@@ -120,14 +173,23 @@ def main():
                 index_data_ticker=index_ticker,  # Dynamisch aus .env
                 implied_volatility_ticker=volatility_ticker,  # Dynamisch aus .env
                 fred_api_key=os.getenv('FRED_API_KEY'),
-                batch_size=int(os.getenv('BATCH_SIZE'))
+                batch_size=int(os.getenv('BATCH_COLLECTION_SIZE'))
             )
+            #endregion
 
+            # ----------------------------------------------------------------
+            # 2.2.1) Ausführung der einzelnen Skripte
+            # ----------------------------------------------------------------
+
+            #region 2.2.1) Ausführung der einzelnen Skripte
             try:
+                #region Ausführung der Datenbank-Migration
                 if parse_boolean(os.getenv('RUN_MIGRATION')):
                     db_repository.collection_db_migrate()
                     logger.info(f"Database migrated successfully for {underlying_ticker}.")
+                #endregion
 
+                #region Innere For-Schleife für das Sammeln aller Optionen (Call und Put)
                 for contract_type in contract_types:
                     client.contract_type = contract_type  # 📌 Contract Type wird hier gesetzt
 
@@ -137,6 +199,7 @@ def main():
                                 client.run_fetch_contracts()
                         except ValueError as e:
                             logger.error(f"Error during contract fetching for {underlying_ticker}, type {contract_type}: {e}")
+                #endregion
 
             except Exception as e:
                 logger.error(f"Unexpected error for {underlying_ticker}: {e}")
@@ -144,12 +207,15 @@ def main():
 
             # 🔹 Hier werden Aggregates erst nach der contract-Schleife gesammelt
             try:
+                #region Sammeln von Aggregates
                 if parse_boolean(os.getenv('RUN_FETCH_AGGREGATES')):
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
                     loop.run_until_complete(run_aggregates(client))
                     loop.close()
+                #endregion
 
+                #region Sammeln von Daten für Index
                 if parse_boolean(os.getenv('RUN_FETCH_CLOSING_CANDLES')):
                     client.fetch_yfinance_data(
                         ticker=client.index_data_ticker,
@@ -157,7 +223,9 @@ def main():
                         end_date=client.closing_candles_end_date,
                         insert_func=client.db_repository.insert_data_of_index
                     )
+                #endregion
 
+                #region Sammeln von FRED-Daten
                 if parse_boolean(os.getenv('RUN_FETCH_FRED_INTEREST')):
                     series_dict = {
                         "4-Week Treasury Bill": "DTB4WK",
@@ -167,7 +235,9 @@ def main():
                     }
                     for name, series_id in series_dict.items():
                         client.fetch_fred_data(series_id)
+                #endregion
 
+                #region Sammeln der Impliziten Volatilität
                 if parse_boolean(os.getenv('RUN_FETCH_IMPLIED_VOLATILITY')):
                     client.fetch_yfinance_data(
                         ticker=client.implied_volatility_ticker,
@@ -175,26 +245,38 @@ def main():
                         end_date=client.implied_volatility_end_date,
                         insert_func=client.db_repository.insert_data_implied_volatility
                     )
+                #endregion
 
             except Exception as e:
                 logger.error(f"Error during additional fetching steps for {underlying_ticker}: {e}")
+            #endregion
+        #endregion
     #endregion
 
-    ############################
-    # Aufrufe für Datenanalyse:
-    ############################
+    # ----------------------------------------------------------------
+    # 3) Aufruf Datenanalyse : Erstellt Prepared Datenbank zum weiterverarbeiten
+    # und führt Auswertung durch
+    # ----------------------------------------------------------------
 
-    #region Aufruf für data_collection : Führt die Datenanalyse aus
+    #region 3) Aufruf Datenverarbeitung + Datenanalyse
     if parse_boolean(os.getenv('RUN_DATA_ANALYSIS')):
-        indices = os.getenv("INDICES_TO_ANALYZE", "").split(",")
+        indices = os.getenv("INDICES_TO_PREPARE", "").split(",")
+
+        index_data_mapping = parse_env_mapping("INDEX_DATA_MAPPING")
 
         for index in indices:
             print(f"🔄 Starte Verarbeitung für Index: {index}")
 
-            # 📌 **Korrekte Datenbanknamen für die Raw-Daten**
+            index_ticker = index_data_mapping.get(index, None)
+
+            # 📌 **Korrekter Datenbanknamen für die Raw-Daten**
             raw_db_name = f"rawdata_{index.lower()}_db.sqlite"
 
-            # ✅ **DataHandler: Verarbeitung der Contracts**
+            # ----------------------------------------------------------------
+            # 3.1) Aufruf Datenvorbereitung
+            # ----------------------------------------------------------------
+
+            #region 3.1) 3.1) Aufruf Datenvorbereitung: Vorbereitung für Datenanalyse
             if parse_boolean(os.getenv('RUN_DATA_HANDLER')):
                 print(f"📊 Running DataHandler für {index}...")
 
@@ -202,7 +284,7 @@ def main():
                     raw_database_path=os.getenv("RAW_DATABASE_PATH"),
                     raw_db_names=[raw_db_name],  # Einzelne DB pro Iteration
                     sorted_db_path=os.path.join(os.getenv("DB_ANALYSIS_PATH"), os.getenv("DB_ANALYSIS_FILENAME")),
-                    batch_size=int(os.getenv("BATCH_SIZE"))
+                    batch_size=int(os.getenv("ANALYSIS_BATCH_SIZE"))
                 )
 
                 db_repository = get_analysis_database_repository()
@@ -210,7 +292,39 @@ def main():
                 data_handler.process_contracts(db_repository)
                 db_repository.close()
 
-            # ✅ **DataAnalyzer: Analyse & Plots**
+            # ✅ **DataPreparer: Prepare Data for further calculations**
+            if parse_boolean(os.getenv('RUN_DATA_PREPARER')):
+                print(f"📈 Running DataPreparer für {index}...")
+
+                data_preparer = DataPreparer(
+                    sorted_db_path=os.path.join(os.getenv("SORTED_DB_PATH"), os.getenv("SORTED_DB_FILENAME")),
+                    prepared_db_path=os.path.join(os.getenv("PREPARED_DB_PATH"), os.getenv("PREPARED_DB_FILENAME")),
+                    indices_to_prepare=os.getenv("INDICES_TO_PREPARE"),
+                    index=index
+                )
+
+                #Kopiert die ursprüngliche sorted Datenbank, falls noch nicht vorhanden
+                data_preparer.initialize_prepared_db()
+                data_preparer.fetch_yfinance_data(
+                    index_ticker,
+                    os.getenv("CLOSING_CANDLES_START_DATE"),
+                    os.getenv("CLOSING_CANDLES_END_DATE")
+                )
+
+                #Konvertiert Volatilität von [%] zu Dezimal
+                if parse_boolean(os.getenv('RUN_CONVERT_VOLA')):
+                    data_preparer.convert_implied_volatility()
+
+                #Berechnet dividend_yield
+                if parse_boolean(os.getenv('RUN_DIVIDEND_YIELD')):
+                    data_preparer.calc_dividend_yield()
+            #endregion
+
+            # ----------------------------------------------------------------
+            # 3.2) Aufruf Datenanalyse
+            # ----------------------------------------------------------------
+
+            #region 3.2) Aufruf Datenanalyse
             if parse_boolean(os.getenv('RUN_DATA_ANALYZER')):
                 print(f"📈 Running DataAnalyzer für {index}...")
 
@@ -220,7 +334,7 @@ def main():
                 )
 
                 data_analyzer.analyze_and_plot()
-
+            #endregion
         print("🎉 Alle Indizes wurden erfolgreich verarbeitet!")
     #endregion
 

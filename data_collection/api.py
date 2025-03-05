@@ -1,10 +1,10 @@
 import requests
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from fredapi import Fred
 import yfinance as yf
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
-from queue import Queue
+from queue import Queue, Empty
 from threading import Thread
 import asyncio
 import aiohttp
@@ -74,14 +74,13 @@ class PolygonApiClient:
         self.logger = logging.getLogger(__name__)
     #endregion
 
-
     # ----------------------------------------------------------------
     # 1) Helfer-Funktionen
     # ----------------------------------------------------------------
 
-    #region Helper-Funktionen : Prüft verschiedene Rahmenbedingungen
+    #region Helfer-Funktionen : Prüft verschiedene Rahmenbedingungen
     def ensure_datetime(self, date):
-        """Convert string to datetime if needed."""
+        """Konvertiert einen String in ein `datetime`-Objekt, falls nötig."""
         if isinstance(date, datetime.datetime):
             return date
         elif isinstance(date, str):
@@ -98,8 +97,7 @@ class PolygonApiClient:
 
     def is_trading_day(self, date: datetime.datetime) -> bool:
         """
-        Check if a given date is a U.S. trading day
-        (not a weekend or U.S. holiday).
+        Prüft, ob ein Datum ein US-Handelstag ist (kein Wochenende oder US-Feiertag).
         """
         if not isinstance(date, datetime.datetime):
             raise TypeError(f"'date' must be a datetime, got {type(date).__name__}.")
@@ -116,7 +114,7 @@ class PolygonApiClient:
         return True
 
     def validate_date_range(self):
-        """Validate that start_date <= end_date."""
+        """Überprüft, dass: start_date <= end_date."""
         if self.start_date > self.end_date:
             raise ValueError("Start date cannot be after end date.")
         return True
@@ -128,22 +126,18 @@ class PolygonApiClient:
 
     #region Error-Handling
     def is_transient_error(exception):
-        """ Prüft, ob es sich um einen transienten Fehler handelt (429 oder 5XX). """
+        """ Prüft, ob es sich um einen transienten Fehler handelt (429, 5XX) oder eine allgemeine requests-Exception. """
         if isinstance(exception, requests.exceptions.RequestException):
             response = getattr(exception, 'response', None)
             if response and response.status_code in [429] + list(range(500, 600)):
                 return True
+            return True  # Alle requests-Exceptions sollen retryen
         return False
 
     @retry(
         stop=stop_after_attempt(5),  # Max. 5 Versuche
         wait=wait_exponential(multiplier=2, min=1, max=30),  # Exponentielles Warten (1s, 2s, 4s, 8s...)
         retry=retry_if_exception(is_transient_error),  # Nur bei transienten Fehlern erneut versuchen
-    )
-    @retry(
-        stop=stop_after_attempt(5),
-        wait=wait_exponential(multiplier=2, min=1, max=30),
-        retry=retry_if_exception(lambda e: isinstance(e, requests.exceptions.RequestException))
     )
     #endregion
 
@@ -183,13 +177,18 @@ class PolygonApiClient:
         db_thread.join()
 
     def worker(self, q):
-        """ Verarbeitet Trading-Days aus der Queue und ruft fetch_and_store_contracts() auf. """
-        while not q.empty():
-            day = q.get()
+        """Verarbeitet Trading-Days aus der Queue und ruft fetch_and_store_contracts() auf."""
+        while True:
+            try:
+                day = q.get(block=True, timeout=5)  # Blockiert bis zu 5 Sekunden
+            except Empty:
+                break  # Beende Worker, falls die Queue leer bleibt
+
             try:
                 self.fetch_and_store_contracts(day)
             except Exception as e:
                 self.logger.error(f"Error on {day}: {e}")
+
             q.task_done()
 
     def db_worker(self):
@@ -204,13 +203,13 @@ class PolygonApiClient:
                 with open("failed_inserts.log", "a") as log_file:
                     log_file.write(f"DB Insert Error: {str(e)}\n")
             db_queue.task_done()
+
     def fetch_and_store_contracts(self, current_date):
         try:
             if isinstance(current_date, datetime.datetime):
                 current_date = current_date.date()
 
             self.logger.info(f"📅 Verarbeite Trading-Day: {current_date.strftime('%Y-%m-%d')}")
-            print(f"📅 Verarbeite Trading-Day: {current_date.strftime('%Y-%m-%d')}")
 
             all_options = []
             next_url = (
@@ -228,55 +227,53 @@ class PolygonApiClient:
                     next_url = f"{next_url}{connector}apiKey={self.api_key}"
 
                 data = self.fetch_with_retry(next_url)
-                if data is None:
-                    self.logger.error(f"Failed to fetch contracts for {current_date.strftime('%Y-%m-%d')}.")
+
+                # 🛑 Falls kein gültiges JSON-Daten-Objekt zurückgegeben wird, sofort abbrechen!
+                if not isinstance(data, dict):
+                    self.logger.error(f"❌ API-Fehler: Ungültige Antwort für {current_date.strftime('%Y-%m-%d')}")
                     return
 
                 results = data.get("results", [])
                 all_options.extend(results)
-                next_url = data.get("next_url")
 
-            # Initialisiere rows_for_db immer, auch wenn es leer bleibt
-            rows_for_db = []
+                # 🛑 Falls `next_url` nicht existiert, breche die Schleife ab.
+                next_url = data.get("next_url", None)
 
-            # Falls keine Contracts gefunden wurden
             if not all_options:
-                self.logger.info(f"⚠ Keine Contracts für {current_date.strftime('%Y-%m-%d')} gefunden.")
-                print(f"⚠ Keine Contracts für {current_date.strftime('%Y-%m-%d')} gefunden.")
-            else:
-                # Falls Contracts vorhanden sind, befülle rows_for_db
-                rows_for_db = [
-                    {
-                        "ticker": r["ticker"],
-                        "underlying_ticker": r["underlying_ticker"],
-                        "cfi": r["cfi"],
-                        "contract_type": r["contract_type"],
-                        "exercise_style": r["exercise_style"],
-                        "expiration_date": self.clamp_date_str if datetime.datetime.strptime(r["expiration_date"],
-                                                                                             "%Y-%m-%d") > self.clamp_date_obj else
-                        r["expiration_date"],
-                        "primary_exchange": r["primary_exchange"],
-                        "shares_per_contract": r["shares_per_contract"],
-                        "strike_price": r["strike_price"],
-                        "date": current_date.strftime("%Y-%m-%d")
-                    }
-                    for r in all_options
-                ]
+                self.logger.warning(f"⚠ Keine Contracts für {current_date.strftime('%Y-%m-%d')} gefunden.")
+                return
 
-            # 🔹 CHUNK_SIZE-Fix
-            CHUNK_SIZE = 100000
+            # 🔹 chunk_size-Fix für Performance
+            chunk_size = self.batch_size
+            rows_for_db = [
+                {
+                    "ticker": r["ticker"],
+                    "underlying_ticker": r["underlying_ticker"],
+                    "cfi": r["cfi"],
+                    "contract_type": r["contract_type"],
+                    "exercise_style": r["exercise_style"],
+                    "expiration_date": self.clamp_date_str if datetime.datetime.strptime(r["expiration_date"],
+                                                                                         "%Y-%m-%d") > self.clamp_date_obj else
+                    r["expiration_date"],
+                    "primary_exchange": r["primary_exchange"],
+                    "shares_per_contract": r["shares_per_contract"],
+                    "strike_price": r["strike_price"],
+                    "date": current_date.strftime("%Y-%m-%d")
+                }
+                for r in all_options
+            ]
 
-            for i in range(0, len(rows_for_db), CHUNK_SIZE):
-                chunk = rows_for_db[i:i + CHUNK_SIZE]
+            for i in range(0, len(rows_for_db), chunk_size):
+                chunk = rows_for_db[i:i + chunk_size]
                 db_queue.put(chunk)
-                print(f"🔄 Starte Bulk-Insert für {len(chunk)} Contracts am {current_date.strftime('%Y-%m-%d')}...")
+                self.logger.info(
+                    f"🔄 Starte Bulk-Insert für {len(chunk)} Contracts am {current_date.strftime('%Y-%m-%d')}...")
 
             self.logger.info(f"✅ Verarbeitung abgeschlossen für {current_date.strftime('%Y-%m-%d')}")
-            print(f"✅ Verarbeitung abgeschlossen für {current_date.strftime('%Y-%m-%d')}")
 
         except Exception as e:
             self.logger.error(f"❌ Fehler für {current_date.strftime('%Y-%m-%d')} - {str(e)}")
-            print(f"❌ Fehler für {current_date.strftime('%Y-%m-%d')} - {str(e)}")
+
     #endregion
 
     # ----------------------------------------------------------------
@@ -298,10 +295,10 @@ class PolygonApiClient:
         total_contracts = len(contracts)
 
         if not contracts:
-            print("⚠️ Keine Contracts gefunden! Abbruch der Aggregates-Sammlung.")
+            self.logger.error(f"⚠️ Keine Contracts gefunden! Abbruch der Aggregates-Sammlung.")
             return
 
-        print(f"🔍 {total_contracts} Contracts gefunden. Starte Fetch...")
+        self.logger.info(f"🔍 {total_contracts} Contracts gefunden. Starte Fetch...")
 
         def fetch_aggregate_data(contract):
             ticker, start_date, expiration_date = contract
@@ -324,7 +321,7 @@ class PolygonApiClient:
         if all_aggregates:
             self.db_repository.insert_contract_aggregates_bulk(sum(all_aggregates, []))
 
-        print(
+        self.logger.info(
             f"🎉 Fetch & Store Aggregates abgeschlossen! 🏁 Total Contracts: {total_contracts}, Total Aggregates gespeichert!")
 
     def fetch_aggregate_sync(self, url, ticker):
@@ -420,14 +417,14 @@ class PolygonApiClient:
         total_contracts = len(contracts)
 
         if not contracts:
-            print("⚠️ Keine Contracts gefunden!")
+            self.logger.error("⚠️ Keine Contracts gefunden!")
             return
 
         total_aggregates = 0  # Gesamtanzahl
         processed_contracts = 0  # Anzahl der verarbeiteten Contracts
         aggregate_buffer = []  # **Buffer für DB-Writes**
 
-        print(f"🔍 {total_contracts} Contracts gefunden. Starte Fetch...")
+        self.logger.info(f"🔍 {total_contracts} Contracts gefunden. Starte Fetch...")
 
         async with aiohttp.ClientSession() as session:
             for i in range(0, len(contracts), self.max_workers):
@@ -450,19 +447,19 @@ class PolygonApiClient:
                 if len(aggregate_buffer) >= self.batch_size:
                     self.db_repository.insert_contract_aggregates_bulk(aggregate_buffer)
                     aggregate_buffer = []  # **Buffer leeren**
-                    print(f"💾 {total_aggregates} Aggregates gespeichert!")
+                    self.logger.info(f"💾 {total_aggregates} Aggregates gespeichert!")
 
                 # **Fortschritt nur alle 1000 Contracts ausgeben**
                 if processed_contracts % 1000 == 0:
-                    print(
+                    self.logger.info(
                         f"📊 {processed_contracts}/{total_contracts} Contracts verarbeitet... | Gesamt Aggregates: {total_aggregates}")
 
             # **Letzten Buffer speichern**
             if aggregate_buffer:
                 self.db_repository.insert_contract_aggregates_bulk(aggregate_buffer)
-                print(f"💾 {total_aggregates} Aggregates gespeichert!")
+                self.logger.info(f"💾 {total_aggregates} Aggregates gespeichert!")
 
-        print(f"🎉 Fetch & Store abgeschlossen! 🏁 Total Aggregates: {total_aggregates}")
+        self.logger.info(f"🎉 Fetch & Store abgeschlossen! 🏁 Total Aggregates: {total_aggregates}")
 
     def run_fetch_and_store_aggregates(self):
         """
@@ -494,29 +491,28 @@ class PolygonApiClient:
 
         for attempt in range(max_retries):
             try:
-                print(f"📊 Fetching data for {ticker}... (Try {attempt + 1}/{max_retries})")
+                self.logger.info(f"📊 Fetching data for {ticker}... (Try {attempt + 1}/{max_retries})")
                 data = yf.download(ticker, start=start_date, end=end_date, progress=False)
 
                 # ✅ Sicherstellen, dass `data` ein DataFrame ist
                 if not isinstance(data, pd.DataFrame):
-                    print(f"⚠️ Fehler: `yf.download()` hat unerwartete Daten zurückgegeben. Inhalt:")
-                    print(data)  # Debugging-Ausgabe
+                    self.logger.error(f"⚠️ Fehler: `yf.download()` hat unerwartete Daten zurückgegeben. Inhalt:")
                     raise ValueError("yfinance returned a non-DataFrame object")
 
                 # ✅ Sicherstellen, dass `data` Spalten hat
                 if data.empty:
-                    print(f"⚠️ Keine Daten für {ticker} erhalten. Erneuter Versuch...")
+                    self.logger.warning(f"⚠️ Keine Daten für {ticker} erhalten. Erneuter Versuch...")
                     raise ValueError("Empty Data")
 
                 # ✅ Daten formatieren
                 formatted_data = self.format_yfinance_data(data)
 
                 if not isinstance(formatted_data, pd.DataFrame):
-                    print(f"❌ Fehler: `format_yfinance_data()` hat kein DataFrame zurückgegeben!")
+                    self.logger.error(f"❌ Fehler: `format_yfinance_data()` hat kein DataFrame zurückgegeben!")
                     raise ValueError("format_yfinance_data returned a non-DataFrame object")
 
                 if formatted_data.empty:
-                    print(f"⚠️ Keine formatierbaren Daten für {ticker} erhalten. Erneuter Versuch...")
+                    self.logger.error(f"⚠️ Keine formatierbaren Daten für {ticker} erhalten. Erneuter Versuch...")
                     raise ValueError("Formatted Data Empty")
 
                 # ✅ Index zurücksetzen
@@ -524,16 +520,16 @@ class PolygonApiClient:
 
                 # ✅ Daten in die DB einfügen
                 insert_func(formatted_data, ticker)
-                print(f"✅ Daten gespeichert für {ticker}")
+                self.logger.info(f"✅ Daten gespeichert für {ticker}")
                 return
 
             except Exception as e:
                 if "Too Many Requests" in str(e) or "Empty Data" in str(e):
-                    print(f"⏳ Warte {wait_time} Sekunden wegen Rate-Limit oder leeren Daten...")
+                    self.logger.error(f"⏳ Warte {wait_time} Sekunden wegen Rate-Limit oder leeren Daten...")
                     time.sleep(wait_time)
                     wait_time *= 2  # Exponentielles Warten
                 else:
-                    print(f"❌ Fehler für {ticker}: {e}")
+                    self.logger.error(f"❌ Fehler für {ticker}: {e}")
                     break  # Kein erneuter Versuch bei anderen Fehlern
 
     #Der alte Stand hat ohne diese Funktion funktioniert, allerdings hat YahooFinance ihre API verändert
@@ -559,12 +555,28 @@ class PolygonApiClient:
 
     #region Datensammlung von FRED-Daten : Sammelt Zins-Daten
     def fetch_fred_data(self, series_id):
+        """
+        Holt FRED-Daten für die angegebene Serie und speichert sie in der Datenbank.
+        """
+        try:
+            fred = Fred(api_key=self.fred_api_key)
 
-        fred = Fred(api_key=self.fred_api_key)
+            # API-Verfügbarkeit prüfen
+            if not fred:
+                self.logger.error(f"❌ FRED API nicht erreichbar!")
+                return
 
-        data = fred.get_series(series_id, self.interest_rate_start_date, self.interest_rate_end_date)
+            data = fred.get_series(series_id, self.interest_rate_start_date, self.interest_rate_end_date)
 
-        self.db_repository.insert_data_interest_rates(data, series_id)
+            if data is None or (hasattr(data, "empty") and data.empty):
+                self.logger.warning(f"⚠️ Keine Daten für FRED-Serie {series_id} erhalten.")
+                return
+
+            self.db_repository.insert_data_interest_rates(data, series_id)
+            self.logger.info(f"✅ FRED-Daten ({series_id}) erfolgreich gespeichert.")
+
+        except Exception as e:
+            self.logger.error(f"❌ Fehler beim Abruf von FRED-Daten ({series_id}): {e}")
     #endregion
 
     # ----------------------------------------------------------------
@@ -572,19 +584,49 @@ class PolygonApiClient:
     # ----------------------------------------------------------------
 
     #region Helferfunktionen für API-Handling
-    def fetch_with_retry(self, url, max_retries=5, timeout=10):
+    def fetch_with_retry(self, url, max_retries=5, timeout=10, base_backoff=1, max_backoff=60):
         """
-        Führt eine HTTP-Anfrage mit Retry-Logik durch.
+        Führt eine HTTP-Anfrage mit intelligenter Retry-Logik durch.
         """
-        backoff = 1
+        backoff = base_backoff  # Startwert für exponentielles Warten
+
         for attempt in range(max_retries):
             try:
                 resp = self.session.get(url, timeout=timeout)
-                resp.raise_for_status()  # Hebt Fehler hervor (z.B. 404, 500)
-                return resp.json()  # Erfolgreiche Antwort zurückgeben
+
+                # 🛑 Wenn der Statuscode in den Fehlerbereich fällt, behandeln wir ihn direkt:
+                status_code = resp.status_code
+
+                if status_code == 429:
+                    self.logger.warning(
+                        f"🚨 API-Rate-Limit (429) erreicht! Warte {backoff} Sekunden... Versuch {attempt + 1}/{max_retries}")
+                elif 500 <= status_code < 600:
+                    self.logger.warning(
+                        f"🔥 Server-Fehler {status_code}. Warte {backoff} Sekunden... Versuch {attempt + 1}/{max_retries}")
+                elif status_code >= 400:  # Alle anderen Fehler (kein Retry nötig)
+                    self.logger.error(f"❌ Nicht-retrybarer Fehler {status_code}: {resp.text}")
+                    return None  # Kein Retry, sofort abbrechen.
+
+                # ✅ JSON-Daten validieren
+                try:
+                    return resp.json()  # Erfolgreiche Antwort zurückgeben
+                except ValueError:
+                    self.logger.error(f"❌ Ungültige JSON-Antwort von {url}: {resp.text}")
+                    return None  # Fehlerhafte JSON-Daten → Kein Retry, abbrechen.
+
+            except requests.exceptions.ConnectionError:
+                self.logger.error(f"❌ Netzwerk-Fehler! Verbindung zum Server fehlgeschlagen.")
+            except requests.exceptions.Timeout:
+                self.logger.warning(
+                    f"⚠ Timeout-Fehler! Warte {backoff} Sekunden... Versuch {attempt + 1}/{max_retries}")
             except requests.exceptions.RequestException as e:
-                self.logger.error(f"Fehler für URL {url}: {e} (Versuch {attempt + 1}/{max_retries})")
-                time.sleep(backoff)  # Exponentielles Warten
-                backoff *= 2
+                self.logger.error(f"❌ Unerwarteter Fehler bei Anfrage: {e}")
+                break  # Kein Retry, wenn Fehler nicht bekannt ist
+
+            time.sleep(backoff)
+            backoff = min(backoff * 2, max_backoff)  # Exponentielles Wachstum begrenzen.
+
+        self.logger.error(f"❌ Max. Versuche erreicht: {url} konnte nicht geladen werden.")
         return None  # Wenn alle Versuche scheitern
+
     #endregion

@@ -10,6 +10,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import scipy
+from scipy.stats import norm
+import time
+import yfinance as yf
 
 class DataHandler:
     def __init__(
@@ -206,6 +209,254 @@ class DataHandler:
         if remaining_time > 182 and remaining_time <= 364:
             id_list = ['DTB6', 'DTB1YR']
             return id_list
+
+
+class DataPreparer:
+    def __init__(
+            self,
+            sorted_db_path,
+            prepared_db_path,
+            indices_to_prepare,
+            index
+    ):
+        self.sorted_db_path = sorted_db_path
+        self.prepared_db_path = prepared_db_path
+        self.indices_to_prepare = indices_to_prepare
+        self.sorted_table_name = f"sorted_{index.lower()}_data"
+        self.prepared_table_name = f"prepared_{index.lower()}_data"
+        self.index = index
+
+        self.initialize_prepared_db()
+
+    def initialize_prepared_db(self):
+        """Kopiert die sortierte Datenbank, falls sie noch nicht existiert und erstellt die vorbereitete Tabelle."""
+        if not os.path.exists(self.prepared_db_path):
+            conn_prepared = sqlite3.connect(self.prepared_db_path)
+            conn_prepared.close()
+            print("✅ `prepared_data_db.sqlite` wurde erstellt.")
+
+        conn_sorted = sqlite3.connect(self.sorted_db_path)
+        conn_prepared = sqlite3.connect(self.prepared_db_path)
+        cursor_sorted = conn_sorted.cursor()
+
+        # Prüfen, ob die Tabelle existiert
+        cursor_sorted.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        tables = [table[0] for table in cursor_sorted.fetchall()]
+
+        if self.sorted_table_name in tables:
+            df = pd.read_sql(f"SELECT * FROM {self.sorted_table_name}", conn_sorted)
+
+            # ❗ Falls `prepared_ndx_data` bereits existiert, NICHT überschreiben, sondern nur falls sie leer ist
+            existing_tables = pd.read_sql("SELECT name FROM sqlite_master WHERE type='table'", conn_prepared)
+
+            if self.prepared_table_name in existing_tables["name"].values:
+                print(f"⚡ Tabelle `{self.prepared_table_name}` existiert bereits. Keine erneute Kopie nötig.")
+            else:
+                df.to_sql(self.prepared_table_name, conn_prepared, if_exists='replace', index=False)
+                print(
+                    f"✅ Tabelle {self.sorted_table_name} wurde als {self.prepared_table_name} in `prepared_data_db.sqlite` kopiert.")
+
+        else:
+            print(
+                f"⚠ Tabelle {self.sorted_table_name} nicht gefunden. Stelle sicher, dass die Sorted-DB korrekt erstellt wurde!")
+
+        conn_sorted.close()
+        conn_prepared.close()
+
+    def convert_implied_volatility(self):
+        """Fügt die Spalte `implied_volatility[dec]` hinzu und befüllt sie, falls noch nicht vorhanden."""
+        conn = sqlite3.connect(self.prepared_db_path)
+        cursor = conn.cursor()
+
+        # Prüfen, ob die Spalte existiert
+        cursor.execute(f"PRAGMA table_info({self.prepared_table_name})")
+        columns = [col[1] for col in cursor.fetchall()]
+
+        if "implied_volatility[dec]" not in columns:
+            cursor.execute(f"ALTER TABLE {self.prepared_table_name} ADD COLUMN `implied_volatility[dec]` REAL")
+            conn.commit()
+
+        # Update nur für Zeilen, wo die Spalte NULL ist (damit nichts überschrieben wird)
+        cursor.execute(f"""
+            UPDATE {self.prepared_table_name}
+            SET `implied_volatility[dec]` = ROUND(implied_volatility / 100, 4)
+            WHERE `implied_volatility[dec]` IS NULL
+        """)
+
+        conn.commit()
+        conn.close()
+        print(f"✅ `implied_volatility[dec]` erfolgreich konvertiert und gespeichert für {self.prepared_table_name}.")
+
+    def calc_dividend_yield(self):
+        """Fügt die Spalte `dividend_yield` hinzu und berechnet sie, falls noch nicht vorhanden."""
+        conn = sqlite3.connect(self.prepared_db_path)
+        cursor = conn.cursor()
+
+        # Prüfen, ob die Spalte existiert
+        cursor.execute(f"PRAGMA table_info({self.prepared_table_name})")
+        columns = [col[1] for col in cursor.fetchall()]
+
+        if "dividend_yield" not in columns:
+            cursor.execute(f"ALTER TABLE {self.prepared_table_name} ADD COLUMN `dividend_yield` REAL")
+            conn.commit()
+
+        # Alle einzigartigen Handelsdaten holen
+        cursor.execute(f"SELECT DISTINCT trade_date FROM {self.prepared_table_name}")
+        trade_dates = [row[0] for row in cursor.fetchall()]
+
+        # Lade Closing Price Daten aus `closing_candles_db`
+        closing_db_path = os.path.join(os.path.dirname(self.prepared_db_path), "closing_candles_db.sqlite")
+        conn_closing = sqlite3.connect(closing_db_path)
+        closing_data = pd.read_sql(f"SELECT date, close FROM closing_data_{self.index.lower()}", conn_closing)
+        conn_closing.close()
+
+        # Falls Closing Price-Daten nicht verfügbar sind
+        if closing_data.empty:
+            print(f"⚠ Keine Closing Price-Daten für {self.index} gefunden. Überspringe Dividend Yield-Berechnung.")
+            return
+
+        closing_data['date'] = pd.to_datetime(closing_data['date'])
+
+        # Berechnung des Dividend Yields für jedes einzigartige Handelsdatum
+        for trade_date in trade_dates:
+            trade_date_dt = pd.to_datetime(trade_date)
+            dividend_yield = self.calculate_dividend_yield(trade_date_dt, closing_data)
+
+            if dividend_yield is not None:
+                cursor.execute(f"""
+                    UPDATE {self.prepared_table_name}
+                    SET dividend_yield = ?
+                    WHERE trade_date = ? AND dividend_yield IS NULL
+                """, (dividend_yield, trade_date))
+
+        conn.commit()
+        conn.close()
+        print(f"✅ `dividend_yield` erfolgreich berechnet und gespeichert für {self.prepared_table_name}.")
+
+    def calculate_dividend_yield(self, trade_date, index_data_df):
+        """
+        Berechnet die Dividendenrendite für ein bestimmtes Datum.
+        Holt Closing Prices jetzt aus `closing_candles_db.sqlite`.
+        """
+        one_year_ago = trade_date - timedelta(days=365)
+
+        # Suche das nächstgelegene Datum (Trade Date & ein Jahr zuvor)
+        nearest_date_t = self.find_nearest_previous_date(trade_date, index_data_df['date'])
+        nearest_date_t1y = self.find_nearest_previous_date(one_year_ago, index_data_df['date'])
+
+        if nearest_date_t is None or nearest_date_t1y is None:
+            print(f"⚠ Kein gültiges Datum für {trade_date.strftime('%Y-%m-%d')} gefunden!")
+            return None
+
+        # Preise aus `closing_candles_db.sqlite` holen
+        price_index_t = index_data_df.loc[index_data_df['date'] == nearest_date_t, 'close'].values
+        price_index_t1y = index_data_df.loc[index_data_df['date'] == nearest_date_t1y, 'close'].values
+
+        if price_index_t.size == 0 or price_index_t1y.size == 0:
+            print(
+                f"⚠ Kein Closing-Preis für {nearest_date_t.strftime('%Y-%m-%d')} oder {nearest_date_t1y.strftime('%Y-%m-%d')} gefunden!")
+            return None
+
+        # Berechnung der Dividendenrendite
+        price_index_t = price_index_t[0]
+        price_index_t1y = price_index_t1y[0]
+
+        return (price_index_t / price_index_t1y) - 1  # (P_t / P_t-1y) - 1
+
+    def find_nearest_previous_date(self, target_date, date_series):
+        """
+        Findet das nächstgelegene vorherige Datum in einer Datumsreihe.
+        """
+        valid_dates = date_series[date_series <= target_date]
+        if valid_dates.empty:
+            return None
+        return valid_dates.max()
+
+    def fetch_yfinance_data(self, ticker, start_date, end_date):
+        """
+        Holt Closing-Price-Daten von Yahoo Finance und speichert sie direkt in `closing_candles_db.sqlite`.
+        """
+        closing_db_path = os.path.join(os.path.dirname(self.prepared_db_path), "closing_candles_db.sqlite")
+        closing_table_name = f"closing_data_{self.index.lower()}"
+
+        max_retries = 5
+        wait_time = 10  # Startwartezeit in Sekunden
+
+        for attempt in range(max_retries):
+            try:
+                print(f"📊 Fetching Closing Prices for {ticker}... (Try {attempt + 1}/{max_retries})")
+                data = yf.download(ticker, start=start_date, end=end_date, progress=False)
+
+                if not isinstance(data, pd.DataFrame) or data.empty:
+                    print(f"⚠️ Keine Daten für {ticker} erhalten. Erneuter Versuch...")
+                    raise ValueError("Empty Data")
+
+                # ✅ Daten formatieren
+                formatted_data = self.format_yfinance_data(data)
+
+                if formatted_data.empty:
+                    print(f"⚠️ Keine formatierbaren Daten für {ticker} erhalten. Erneuter Versuch...")
+                    raise ValueError("Formatted Data Empty")
+
+                # 🔹 **Datum korrekt als YYYY-MM-DD formatieren**
+                formatted_data['Datetime'] = formatted_data['Datetime'].dt.strftime('%Y-%m-%d')
+
+                # ✅ Speichern in SQLite-Datenbank
+                conn = sqlite3.connect(closing_db_path)
+                cursor = conn.cursor()
+
+                # Tabelle erstellen, falls sie nicht existiert
+                cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {closing_table_name} (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        date TEXT UNIQUE,
+                        close REAL
+                    )
+                """)
+
+                # Daten in die DB speichern (ersetze vorhandene Einträge für den Tag)
+                formatted_data = formatted_data[['Datetime', 'Close']].rename(
+                    columns={"Datetime": "date", "Close": "close"})
+
+                formatted_data.to_sql(closing_table_name, conn, if_exists='replace', index=False)
+                conn.commit()
+                conn.close()
+
+                print(
+                    f"✅ Closing-Price-Daten für {ticker} gespeichert in `{closing_db_path}` (Tabelle `{closing_table_name}`).")
+                return
+
+            except Exception as e:
+                if "Too Many Requests" in str(e) or "Empty Data" in str(e):
+                    print(f"⏳ Warte {wait_time} Sekunden wegen Rate-Limit oder leerer Daten...")
+                    time.sleep(wait_time)
+                    wait_time *= 2  # Exponentielles Warten
+                else:
+                    print(f"❌ Fehler für {ticker}: {e}")
+                    break  # Kein erneuter Versuch bei anderen Fehlern
+
+    #Der alte Stand hat ohne diese Funktion funktioniert, allerdings hat YahooFinance ihre API verändert
+    def format_yfinance_data(self, input_df):
+        """
+        Formatiert die von Yahoo Finance abgerufenen Daten in das benötigte Format.
+        """
+        # ✅ Falls MultiIndex vorhanden ist, entferne die erste Ebene ("Price")
+        if isinstance(input_df.columns, pd.MultiIndex):
+            input_df.columns = input_df.columns.droplevel(1)
+
+        # ✅ Index zurücksetzen, damit das Datum eine Spalte wird
+        input_df = input_df.reset_index()
+
+        # ✅ Spaltennamen normalisieren (yfinance verwendet manchmal "Date" statt "Datetime")
+        if "Date" in input_df.columns:
+            input_df.rename(columns={"Date": "Datetime"}, inplace=True)
+
+        # ✅ Nur relevante Spalten behalten
+        required_columns = ["Datetime", "Close"]
+        available_columns = [col for col in required_columns if col in input_df.columns]
+
+        return input_df[available_columns]
+
 
 class DataAnalyzer:
     def __init__(

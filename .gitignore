@@ -7,3 +7,4 @@ error_log.txt
 errors.log
 *.sqlite
 *.sqlite-journal
+test

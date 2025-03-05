@@ -124,10 +124,6 @@ print("✅ Alle Dividendenrenditen wurden berechnet und in der Datenbank aktuali
 #Berechnung BSM, Hier habe ich das Problem, dass es eine Formel für Put und für Call-Optionen gibt und das einfach nich funktioniert diese richtig zu erkennen
 # Ich sende dir auch noch eine Word Datei in der die Black Scholes Formel mit Einheit der Input-Parameter beschrieben werden
 
-import sqlite3
-import pandas as pd
-import numpy as np
-import re
 from scipy.stats import norm
 
 # Datenbankpfade

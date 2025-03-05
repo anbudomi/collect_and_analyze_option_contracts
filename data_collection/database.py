@@ -8,11 +8,19 @@ import time
 from tqdm import tqdm
 
 
+# ----------------------------------------------------------------
+# 1) Datenbank-Verwaltungsklassen (Abstrakt & Implementierung)
+# ----------------------------------------------------------------
+
+#region 1) Datenbank-Verwaltungsklassen (Abstrakt & Implementierung)
 class DatabaseType(Enum):
     SQLITE = 'sqlite'
 
 
 def get_collection_database_repository(type: DatabaseType) -> dict:
+    """
+    Erstellt eine Sammlung von Datenbank-Repositories für verschiedene Underlying-Ticker.
+    """
     if type == DatabaseType.SQLITE:
         # Alle Underlying-Ticker aus der .env lesen und bereinigen (Großbuchstaben)
         underlying_tickers = os.getenv('POLYGON_UNDERLYING_TICKER', 'UNKNOWN').replace(" ", "").upper().split(",")
@@ -21,79 +29,104 @@ def get_collection_database_repository(type: DatabaseType) -> dict:
         repositories = {}
 
         for ticker in underlying_tickers:
-            # Dynamisch den DB-Filename setzen (KEIN contract_type im Namen)
             db_filename = f"data_collection/data/rawdata_{ticker.lower()}_db.sqlite"
             repositories[ticker] = SqliteDatabaseRepository(db_filename)
 
         return repositories
     else:
         raise ValueError("Invalid database type.")
+#endregion
 
+# ----------------------------------------------------------------
+# 2) Abstrakte Klasse für Datenbank-Repositories
+# ----------------------------------------------------------------
 
-
-
+#region 2) Abstrakte Klasse für Datenbank-Repositories
 class CollectionDatabaseRepository(ABC):
+    """Abstrakte Klasse für eine Datenbank-Schnittstelle zur Speicherung von Finanzdaten."""
+
     @abstractmethod
     def collection_db_migrate(self):
+        """Führt die initiale Migration der Datenbank durch (Tabellen erstellen)."""
         ...
 
     @abstractmethod
     def insert_contract(self, contract):
+        """Fügt einen einzelnen Vertrag in die Datenbank ein."""
         ...
 
     @abstractmethod
     def insert_contracts_bulk(self, contracts):
+        """Führt einen Bulk-Insert für mehrere Verträge durch."""
         ...
 
     @abstractmethod
     def insert_aggregate(self, aggregate):
+        """Fügt einzelne Aggregationsdaten für einen Kontrakt ein."""
         ...
 
     @abstractmethod
     def insert_contract_aggregates_bulk(self, aggregates):
+        """Speichert eine große Menge an Aggregationsdaten in die Datenbank."""
         ...
 
     @abstractmethod
     def count_contracts(self):
+        """Zählt die Anzahl der gespeicherten Verträge."""
         ...
 
     @abstractmethod
     def get_tickers(self, batch_size, offset):
+        """Liefert eine Liste von Tickersymbolen mit zugehörigen Daten."""
         ...
 
     @abstractmethod
     def aggregate_exists(self, ticker, from_date, to_date):
+        """Überprüft, ob Aggregationsdaten für einen bestimmten Zeitraum existieren."""
         ...
 
     @abstractmethod
     def insert_data_of_index(self, data, ticker):
+        """Speichert Index-Daten wie Schlusskurse von YFinance."""
         ...
 
     @abstractmethod
     def insert_data_interest_rates(self, series_data, series_id):
+        """Speichert Zinssatz-Daten aus FRED in der Datenbank."""
         ...
 
     @abstractmethod
     def insert_data_implied_volatility(self, ticker, data):
+        """Speichert implizite Volatilitätsdaten in der Datenbank."""
         ...
+#endregion
 
+# ----------------------------------------------------------------
+# 3) Implementierung der SQLite-Datenbank-Klasse
+# ----------------------------------------------------------------
+
+#region 3) Implementierung der SQLite-Datenbank-Klasse
 class SqliteDatabaseRepository(CollectionDatabaseRepository):
+    """SQLite-Datenbank-Repository zur Speicherung von Finanzdaten."""
+
     def __init__(self, filename):
         super().__init__()
         self.filename = filename
         self.connection = self.get_collection_database_connection()
 
+    # ----------------------------------------------------------------
+    # 3.1) Verbindung & Initialisierung
+    # ----------------------------------------------------------------
+
+    #region 3.1) Verbindung & Initialisierung
     @retry(
         stop=stop_after_attempt(5),
         wait=wait_exponential(multiplier=1, min=4, max=10),
         retry=retry_if_exception_type(sqlite3.OperationalError),
         reraise=True
     )
-
     def get_collection_database_connection(self):
-        """
-        Returns a single, reusable connection to the SQLite database.
-        """
+        """Erstellt eine Verbindung zur SQLite-Datenbank mit Optimierungen."""
         conn = sqlite3.connect(self.filename, isolation_level=None, check_same_thread=False)
         c = conn.cursor()
         c.execute("PRAGMA synchronous = OFF")
@@ -102,13 +135,11 @@ class SqliteDatabaseRepository(CollectionDatabaseRepository):
         return conn
 
     def collection_db_migrate(self):
-        """
-        Creates the tables if they don't already exist. Uses the single connection.
-        """
+        """Erstellt notwendige Tabellen für die Speicherung von Options- und Marktdaten."""
         try:
             c = self.connection.cursor()
 
-            # 'contracts' table
+            # Erstelle die notwendigen Tabellen
             c.execute("""
                 CREATE TABLE IF NOT EXISTS contracts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -126,7 +157,6 @@ class SqliteDatabaseRepository(CollectionDatabaseRepository):
                 )
             """)
 
-            # 'contract_aggregates' table
             c.execute("""
                 CREATE TABLE IF NOT EXISTS contract_aggregates (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -144,7 +174,6 @@ class SqliteDatabaseRepository(CollectionDatabaseRepository):
                 )
             """)
 
-            # 'SP500_daily_close' table
             c.execute("""
                 CREATE TABLE IF NOT EXISTS index_data (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -159,7 +188,6 @@ class SqliteDatabaseRepository(CollectionDatabaseRepository):
                 )
             """)
 
-            # 'treasury_bill' table
             c.execute("""
                 CREATE TABLE IF NOT EXISTS treasury_bill (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -170,7 +198,6 @@ class SqliteDatabaseRepository(CollectionDatabaseRepository):
                 )
             """)
 
-            # 'implicit_volatility' table
             c.execute("""
                 CREATE TABLE IF NOT EXISTS implied_volatility (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -185,63 +212,53 @@ class SqliteDatabaseRepository(CollectionDatabaseRepository):
                 )
             """)
 
-            print("Database migration completed successfully.")
+            print("✅ Datenbankmigration abgeschlossen.")
         except sqlite3.Error as e:
-            print(f"An error occurred during migration: {e}")
+            print(f"❌ Fehler während der Migration: {e}")
 
-    def is_day_sampled(self, date_str):
-        """Prüft, ob ein bestimmtes Datum bereits in der contracts-Tabelle existiert."""
-        c = self.connection.cursor()
-        query = "SELECT COUNT(*) FROM contracts WHERE date = ?"
-        c.execute(query, (date_str,))
-        return c.fetchone()[0] > 0
-
-    def mark_day_sampled(self, date_str):
-        """Markiert einen Tag als verarbeitet, um doppelte Anfragen zu verhindern."""
-        c = self.connection.cursor()
-        query = "INSERT OR IGNORE INTO sampled_days (date) VALUES (?)"
-        c.execute(query, (date_str,))
-        self.connection.commit()
-
-    def insert_contract(self, contract):
+    def drop_tables(self, db_paths, tables_list):
         """
-        Inserts a contract, skipping insertion if a duplicate (ticker, date) already exists.
-        Reuses self.connection.
-        """
-        c = self.connection.cursor()
-        c.execute("""
-            SELECT 1 FROM contracts WHERE ticker = ? AND date = ?
-        """, (contract.get("ticker"), contract.get("date")))
+        Löscht angegebene Tabellen aus mehreren SQLite-Datenbanken.
 
-        if c.fetchone():
-            print(f"Duplicate detected: Ticker {contract.get('ticker')} on {contract.get('date')}. Skipping insertion.")
+        :param db_paths: Liste von Pfaden zu den SQLite-Datenbanken.
+        :param tables_list: Liste der zu löschenden Tabellen.
+
+        In der .env anzupassen:
+        RUN_DROP_TABLES=
+        TARGET_DB=
+        TABLES_TO_DROP=
+        """
+        if not db_paths or not tables_list:
+            print("⚠️ Keine Datenbanken oder Tabellen angegeben. Kein Löschvorgang erforderlich.")
             return
 
-        c.execute("""
-            INSERT INTO contracts (
-                ticker, underlying_ticker, cfi, contract_type,
-                exercise_style, expiration_date, primary_exchange,
-                shares_per_contract, strike_price, date
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            contract.get("ticker"),
-            contract.get("underlying_ticker"),
-            contract.get("cfi"),
-            contract.get("contract_type"),
-            contract.get("exercise_style"),
-            contract.get("expiration_date"),
-            contract.get("primary_exchange"),
-            contract.get("shares_per_contract"),
-            contract.get("strike_price"),
-            contract.get("date")
-        ))
-        # Commit not strictly necessary with isolation_level=None, but can be done if desired:
-        # self.connection.commit()
+        try:
+            for db_path in db_paths:
+                conn = sqlite3.connect(db_path)
+                c = conn.cursor()
+                print(f"🔴 Verbindung zur Datenbank: {db_path}")
 
+                for table in tables_list:
+                    print(f"🗑 Lösche Tabelle `{table}` in `{db_path}`...")
+                    c.execute(f"DROP TABLE IF EXISTS {table}")
+
+                conn.commit()
+                conn.close()
+                print(f"✅ Tabellen {tables_list} wurden erfolgreich aus `{db_path}` gelöscht.")
+
+        except sqlite3.Error as e:
+            print(f"❌ Fehler beim Löschen der Tabellen: {e}")
+    #endregion
+
+    # ----------------------------------------------------------------
+    # 3.2) Funktionen zur Speicherung von Kontrakten
+    # ----------------------------------------------------------------
+
+    #region 3.2) Funktionen zur Speicherung von Kontrakten
     def insert_contracts_bulk(self, contracts_list):
         """
         Optimierter Bulk-Insert für Optionsdaten in SQLite.
-        - Nutzt große Batches (10.000)
+        - Nutzt große Batches
         - Verwendet explizite Transaktionen (`BEGIN TRANSACTION` & `COMMIT`)
         - Konvertiert alle Daten in kompatible Typen (keine None-Werte)
         - Nutzt `PRAGMA`-Optimierungen für schnelles Schreiben
@@ -306,39 +323,13 @@ class SqliteDatabaseRepository(CollectionDatabaseRepository):
         except sqlite3.Error as e:
             print(f"❌ Fehler beim Einfügen in contracts: {e}")
             self.connection.rollback()  # **Rollback bei Fehlern**
+    #endregion
 
-    def insert_aggregate(self, aggregate):
-        """
-        Inserts a contract aggregate, skipping insertion if a duplicate (contract_ticker, date) already exists.
-        Reuses self.connection.
-        """
-        c = self.connection.cursor()
-        c.execute("""
-            SELECT 1 FROM contract_aggregates WHERE contract_ticker = ? AND date = ?
-        """, (aggregate["contract_ticker"], aggregate["date"]))
+    # ----------------------------------------------------------------
+    # 3.3) Funktionen zur Speicherung von Aggregationsdaten
+    # ----------------------------------------------------------------
 
-        if c.fetchone():
-            print(f"Duplicate detected: Ticker {aggregate['contract_ticker']} on {aggregate['date']}. Skipping insertion.")
-            return
-
-        c.execute("""
-            INSERT INTO contract_aggregates (
-                contract_ticker, c, h, l, n, o, t, v, vw, date
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            aggregate["contract_ticker"],
-            aggregate["c"],
-            aggregate["h"],
-            aggregate["l"],
-            aggregate["n"],
-            aggregate["o"],
-            aggregate["t"],
-            aggregate["v"],
-            aggregate["vw"],
-            aggregate["date"]
-        ))
-        # self.connection.commit()
-
+    #region 3.3) Funktionen zur Speicherung von Aggregationsdaten
     def insert_contract_aggregates_bulk(self, aggregates_list):
         """
         Optimierter Bulk-Insert für Contract-Aggregate-Daten in SQLite.
@@ -421,16 +412,13 @@ class SqliteDatabaseRepository(CollectionDatabaseRepository):
             LIMIT 1
         """, (ticker, from_date, to_date))
         return c.fetchone() is not None
+    #endregion
 
-    def drop_all_tables(self):
-        """
-        Drops all relevant tables.
-        """
-        c = self.connection.cursor()
-        c.execute("DROP TABLE IF EXISTS contracts")
-        c.execute("DROP TABLE IF EXISTS contract_aggregates")
-        print("All tables have been dropped.")
+    # ----------------------------------------------------------------
+    # 3.4) Zusätzliche Daten (Zinsen, Volatilität, Index)
+    # ----------------------------------------------------------------
 
+    #region 3.4) Zusätzliche Daten (Zinsen, Volatilität, Index)
     def insert_data_of_index(self, data, ticker):
         print(f"📊 Typ von `data` direkt nach Funktionsaufruf: {type(data)}")
         print(f"📊 Erste Zeichen von `data`, falls String: {data[:100] if isinstance(data, str) else 'Kein String'}")
@@ -501,7 +489,6 @@ class SqliteDatabaseRepository(CollectionDatabaseRepository):
         self.connection.commit()
 
     def insert_data_interest_rates(self, series_data, series_id):
-
         c  = self.connection.cursor()
         # Iteriere über die abgerufenen Daten
         for date, interest_rate in series_data.items():
@@ -520,7 +507,6 @@ class SqliteDatabaseRepository(CollectionDatabaseRepository):
         self.connection.commit()
 
     def insert_data_implied_volatility(self, ticker, data):
-
         print("Ticker type:", type(ticker), ticker)
 
         # Falls die Spalten ein MultiIndex sind, flache sie ab, indem du Level 0 (Attributnamen) verwendest.
@@ -578,39 +564,5 @@ class SqliteDatabaseRepository(CollectionDatabaseRepository):
                 self.connection.rollback()
 
         self.connection.commit()
-
-
-
-    def fetch_all(self, query, params=()):
-        """ Führt eine SQL-Select-Abfrage aus und gibt die Ergebnisse zurück. """
-        c = self.connection.cursor()
-        try:
-            c.execute(query, params)
-            return c.fetchall()
-        except sqlite3.Error as e:
-            print(f"❌ Fehler beim Abfragen der Datenbank: {e}")
-            return []
-
-    def count_contracts(self):
-        """
-        Returns the number of entries in the 'contracts' table, reusing the single connection.
-        """
-        c = self.connection.cursor()
-        c.execute("SELECT COUNT(*) FROM contracts")
-        count = c.fetchone()[0]
-        return count
-
-    def get_tickers(self, batch_size, offset):
-        """
-        Returns a list of (ticker, date, expiration_date) from 'contracts' in ascending date order.
-        Uses LIMIT + OFFSET for pagination.
-        """
-        c = self.connection.cursor()
-        c.execute("""
-            SELECT DISTINCT ticker, date, expiration_date
-            FROM contracts
-            ORDER BY date ASC
-            LIMIT ? OFFSET ?
-        """, (batch_size, offset))
-        tickers = c.fetchall()
-        return tickers
+    #endregion
+#endregion
