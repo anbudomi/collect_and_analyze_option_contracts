@@ -8,10 +8,10 @@ from data_analysis.datahandling import DataHandler, DataAnalyzer, DataPreparer
 from data_collection.api import PolygonApiClient
 from data_collection.database import get_collection_database_repository
 from data_analysis.database import get_analysis_database_repository
+import shutil
 
 #.env frühestmöglich auslesen!
 dotenv.load_dotenv()
-
 
 # ----------------------------------------------------------------
 # 1) Helfer-Funktionen und Logging
@@ -29,46 +29,60 @@ def parse_boolean(value):
     else:
         raise ValueError(f"Cannot parse '{value}' as a boolean.")
 
-
 def setup_logging(log_level=logging.INFO):
-    """Initialisiert das Logging und speichert es im 'error_logging'-Ordner (falls Schreibrechte vorhanden)."""
+    """
+    Erstellt eine neue Log-Struktur mit Timestamp und archiviert alte Logs.
+    Struktur:
+    - error_logging/
+      - archiv/               (Alte Logs)
+      - YYYYMMDD_HHMM/        (Aktuelle Logs)
+        - error_log.txt        (Allgemeine Fehler)
+        - api_spx_contracts.txt    (SPX Contracts-Fehler)
+        - api_ndx_contracts.txt    (NDX Contracts-Fehler)
+    """
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    log_directory = os.path.join(script_dir, "error_logging")  # Neuer Ordner für Logs
+    log_directory = os.path.join(script_dir, "error_logging")
+    archive_directory = os.path.join(log_directory, "archiv")
 
-    log_path = None
-    try:
-        os.makedirs(log_directory, exist_ok=True)  # Falls nicht vorhanden, erstellen
-        log_path = os.path.join(log_directory, "error_log.txt")  # Log-Datei
-    except Exception as e:
-        print(f"⚠️ Konnte Log-Verzeichnis nicht erstellen: {e}")
+    # Erstelle Verzeichnisse falls sie nicht existieren
+    os.makedirs(log_directory, exist_ok=True)
+    os.makedirs(archive_directory, exist_ok=True)
 
+    # Aktuellen Log-Ordner erstellen
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
+    current_log_folder = os.path.join(log_directory, timestamp)
+    os.makedirs(current_log_folder, exist_ok=True)
+
+    # Archivierung alter Log-Ordner
+    for folder in os.listdir(log_directory):
+        folder_path = os.path.join(log_directory, folder)
+        if os.path.isdir(folder_path) and folder != "archiv" and folder != timestamp:
+            shutil.move(folder_path, os.path.join(archive_directory, folder))
+
+    # Allgemeines Logging
+    log_path = os.path.join(current_log_folder, "error_log.txt")
+
+    # Logging Setup
     logger = logging.getLogger(__name__)
-    logger.setLevel(log_level)
+    logger.setLevel(logging.INFO)
 
     formatter = logging.Formatter('[%(asctime)s] %(levelname)s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
 
-    # Verhindert doppelte Handler in Multi-Threading/Multi-Process-Umgebungen
-    if not logger.hasHandlers():
-        # Konsolen-Logging
-        console_handler = logging.StreamHandler()
-        console_handler.setFormatter(formatter)
-        logger.addHandler(console_handler)
+    # Stream Logging (Konsole)
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
 
-        # Datei-Logging (falls möglich)
-        if log_path:
-            try:
-                file_handler = logging.FileHandler(log_path, encoding='utf-8')
-                file_handler.setFormatter(formatter)
-                logger.addHandler(file_handler)
-            except Exception as e:
-                logger.warning(f"⚠️ Datei-Logging deaktiviert: {e}")
+    # Datei-Logging (Allgemeine Fehler)
+    file_handler = logging.FileHandler(log_path, encoding='utf-8')
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
 
-    logger.info("🔹 Logging erfolgreich initialisiert.")
-    if log_path:
-        print(f"📄 Log-Datei: {log_path}")
-    else:
-        print("⚠️ Logging wird nur in der Konsole ausgegeben.")
-    return logger
+    logger.info(f"🔹 Logging initialisiert mit neuem Ordner: {current_log_folder}")
+
+    return logger, current_log_folder
+
+
 
 # Mapping aus der .env einlesen und in Dicts umwandeln
 def parse_env_mapping(env_var):
@@ -83,13 +97,14 @@ def parse_env_mapping(env_var):
 
 async def run_aggregates(client):
     await client.fetch_and_store_aggregates_async()
+
 #endregion
 
 def main():
     """Hauptfunktion des Skripts."""
 
     #initiiert logger
-    logger = setup_logging()
+    logger, current_log_folder = setup_logging()
 
     # ----------------------------------------------------------------
     # 2) Aufruf Datensammlung
@@ -173,7 +188,7 @@ def main():
                 index_data_ticker=index_ticker,  # Dynamisch aus .env
                 implied_volatility_ticker=volatility_ticker,  # Dynamisch aus .env
                 fred_api_key=os.getenv('FRED_API_KEY'),
-                batch_size=int(os.getenv('BATCH_COLLECTION_SIZE'))
+                batch_size=int(os.getenv('BATCH_COLLECTION_SIZE')),
             )
             #endregion
 
@@ -247,6 +262,10 @@ def main():
                     )
                 #endregion
 
+                ##Performanceindex ^SP500TR von yfinance ziehen
+
+                ##Performanceindex XNDX aus excel ziehen
+
             except Exception as e:
                 logger.error(f"Error during additional fetching steps for {underlying_ticker}: {e}")
             #endregion
@@ -254,8 +273,7 @@ def main():
     #endregion
 
     # ----------------------------------------------------------------
-    # 3) Aufruf Datenanalyse : Erstellt Prepared Datenbank zum weiterverarbeiten
-    # und führt Auswertung durch
+    # 3) Aufruf Datenanalyse : Erstellt Prepared Datenbank zum Weiterverarbeiten und führt Auswertung durch
     # ----------------------------------------------------------------
 
     #region 3) Aufruf Datenverarbeitung + Datenanalyse
@@ -276,7 +294,7 @@ def main():
             # 3.1) Aufruf Datenvorbereitung
             # ----------------------------------------------------------------
 
-            #region 3.1) 3.1) Aufruf Datenvorbereitung: Vorbereitung für Datenanalyse
+            #region 3.1) Aufruf Datenvorbereitung: Vorbereitung für Datenanalyse
             if parse_boolean(os.getenv('RUN_DATA_HANDLER')):
                 print(f"📊 Running DataHandler für {index}...")
 

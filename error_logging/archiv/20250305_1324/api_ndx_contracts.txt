@@ -1,0 +1,1 @@
+{"ticker": "ndx", "date": "2018-01-03", "reason": "Simulierter API-Fehler (20% Testfall)", "url": "https://api.polygon.io/v3/reference/options/contracts?underlying_ticker=NDX&as_of=2018-01-03&expired=False&contract_type=call&limit=1000&apiKey=1W0qWeKtKDuvxJG4VLDp0kbQcEBr6wkf", "http_status": "500"}

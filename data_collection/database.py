@@ -51,33 +51,13 @@ class CollectionDatabaseRepository(ABC):
         ...
 
     @abstractmethod
-    def insert_contract(self, contract):
-        """Fügt einen einzelnen Vertrag in die Datenbank ein."""
-        ...
-
-    @abstractmethod
     def insert_contracts_bulk(self, contracts):
         """Führt einen Bulk-Insert für mehrere Verträge durch."""
         ...
 
     @abstractmethod
-    def insert_aggregate(self, aggregate):
-        """Fügt einzelne Aggregationsdaten für einen Kontrakt ein."""
-        ...
-
-    @abstractmethod
     def insert_contract_aggregates_bulk(self, aggregates):
         """Speichert eine große Menge an Aggregationsdaten in die Datenbank."""
-        ...
-
-    @abstractmethod
-    def count_contracts(self):
-        """Zählt die Anzahl der gespeicherten Verträge."""
-        ...
-
-    @abstractmethod
-    def get_tickers(self, batch_size, offset):
-        """Liefert eine Liste von Tickersymbolen mit zugehörigen Daten."""
         ...
 
     @abstractmethod
@@ -564,5 +544,27 @@ class SqliteDatabaseRepository(CollectionDatabaseRepository):
                 self.connection.rollback()
 
         self.connection.commit()
+    #endregion
+
+    # ----------------------------------------------------------------
+    # 3.5) Hilfsfunktionen für Errorhandling
+    # ----------------------------------------------------------------
+
+    #region 3.5) Hilfsfunktionen für Errorhandling
+    def count_contracts(self):
+        """Zählt die Anzahl der Einträge in der Contracts-Tabelle."""
+        query = "SELECT COUNT(*) FROM contracts"
+        c = self.connection.cursor()
+        c.execute(query)
+        count = c.fetchone()[0]
+        return count
+
+    def count_aggregates(self):
+        """Zählt die Anzahl der Einträge in der contract_aggregates-Tabelle."""
+        query = "SELECT COUNT(*) FROM contract_aggregates"
+        c = self.connection.cursor()
+        c.execute(query)
+        count = c.fetchone()[0]
+        return count
     #endregion
 #endregion
