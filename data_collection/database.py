@@ -192,6 +192,16 @@ class SqliteDatabaseRepository(CollectionDatabaseRepository):
                 )
             """)
 
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS performance_index (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ticker TEXT,
+                    date TEXT,
+                    close REAL,
+                    UNIQUE(ticker, date)
+                )
+            """)
+
             print("✅ Datenbankmigration abgeschlossen.")
         except sqlite3.Error as e:
             print(f"❌ Fehler während der Migration: {e}")
@@ -399,6 +409,24 @@ class SqliteDatabaseRepository(CollectionDatabaseRepository):
     # ----------------------------------------------------------------
 
     #region 3.4) Zusätzliche Daten (Zinsen, Volatilität, Index)
+    def insert_data_interest_rates(self, series_data, series_id):
+        c  = self.connection.cursor()
+        # Iteriere über die abgerufenen Daten
+        for date, interest_rate in series_data.items():
+            # Stelle sicher, dass das Datum als String im Format YYYY-MM-DD vorliegt
+            if hasattr(date, 'strftime'):
+                date_str = date.strftime('%Y-%m-%d')
+            else:
+                date_str = str(date)
+
+            # Einfügen in die Tabelle; bei doppelten (date, series_id)-Kombinationen wird der Eintrag ignoriert
+            c.execute("""
+                    INSERT OR IGNORE INTO treasury_bill (date, interest_rate, series_id)
+                    VALUES (?, ?, ?)
+                """, (date_str, interest_rate, series_id))
+
+        self.connection.commit()
+
     def insert_data_of_index(self, data, ticker):
         print(f"📊 Typ von `data` direkt nach Funktionsaufruf: {type(data)}")
         print(f"📊 Erste Zeichen von `data`, falls String: {data[:100] if isinstance(data, str) else 'Kein String'}")
@@ -452,7 +480,7 @@ class SqliteDatabaseRepository(CollectionDatabaseRepository):
                     row.get("Volume", None)
                 )
 
-                print("📊 Einfügen in DB:", values)
+                #print("📊 Einfügen in DB:", values)
 
                 # ✅ SQL-Query für den Datenbank-Insert
                 sql = ("INSERT INTO index_data (ticker, date, close, high, low, open, volume) "
@@ -463,40 +491,26 @@ class SqliteDatabaseRepository(CollectionDatabaseRepository):
                 print("✅ Daten erfolgreich eingefügt.")
 
             except Exception as e:
-                print(f"❌ Fehler beim Einfügen von {values}: {e}")
+                #print(f"❌ Fehler beim Einfügen von {values}: {e}")
                 self.connection.rollback()
 
         self.connection.commit()
 
-    def insert_data_interest_rates(self, series_data, series_id):
-        c  = self.connection.cursor()
-        # Iteriere über die abgerufenen Daten
-        for date, interest_rate in series_data.items():
-            # Stelle sicher, dass das Datum als String im Format YYYY-MM-DD vorliegt
-            if hasattr(date, 'strftime'):
-                date_str = date.strftime('%Y-%m-%d')
-            else:
-                date_str = str(date)
-
-            # Einfügen in die Tabelle; bei doppelten (date, series_id)-Kombinationen wird der Eintrag ignoriert
-            c.execute("""
-                    INSERT OR IGNORE INTO treasury_bill (date, interest_rate, series_id)
-                    VALUES (?, ?, ?)
-                """, (date_str, interest_rate, series_id))
-
-        self.connection.commit()
-
-    def insert_data_implied_volatility(self, ticker, data):
+    def insert_data_implied_volatility(self, data, ticker):
         print("Ticker type:", type(ticker), ticker)
 
-        # Falls die Spalten ein MultiIndex sind, flache sie ab, indem du Level 0 (Attributnamen) verwendest.
+        # Falls die Spalten ein MultiIndex sind, flache sie ab.
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
 
-        # Wenn das Datum im Index steckt, in eine Spalte umwandeln.
+        # Falls "Datetime" vorhanden ist, verwende diese als Datumsspalte.
+        if "Datetime" in data.columns:
+            # Überschreibe ggf. vorhandene "Date"-Spalte, um sicherzustellen, dass das korrekte Datum genutzt wird.
+            data["Date"] = data["Datetime"]
+
+        # Wenn die Datumsspalte nicht vorhanden ist, in eine Spalte umwandeln.
         if 'Date' not in data.columns:
             data = data.reset_index()
-            # Falls der ursprüngliche Index keinen Namen hatte, heißt die neue Spalte "index".
             if 'Date' not in data.columns:
                 data.rename(columns={"index": "Date"}, inplace=True)
 
@@ -506,11 +520,12 @@ class SqliteDatabaseRepository(CollectionDatabaseRepository):
         c = self.connection.cursor()
 
         for _, row in data.iterrows():
-            # Datum in einen String umwandeln (falls es ein Timestamp ist)
-            if hasattr(row['Date'], 'strftime'):
-                date_str = row['Date'].strftime('%Y-%m-%d')
+            # Nutze den Wert aus der "Date"-Spalte, der nun das richtige Datum (aus "Datetime") enthält.
+            date_value = row["Date"]
+            if hasattr(date_value, 'strftime'):
+                date_str = date_value.strftime('%Y-%m-%d')
             else:
-                date_str = str(row['Date'])
+                date_str = str(date_value)
 
             # Zugriff auf die einzelnen Spaltenwerte als skalare Werte
             close_val = row["Close"]
@@ -520,7 +535,7 @@ class SqliteDatabaseRepository(CollectionDatabaseRepository):
             volume_val = row["Volume"]
 
             values = (
-                ticker,  # ticker (String)
+                ticker,  # Ticker (String)
                 date_str,  # Datum als String
                 close_val,  # Schlusskurs
                 high_val,  # Tageshoch
@@ -531,7 +546,6 @@ class SqliteDatabaseRepository(CollectionDatabaseRepository):
 
             print("Einfügen:", values)
 
-            # Beispielhafte SQL-Abfrage – passe die Tabelle und Platzhalter an deine Datenbank an
             sql = ("INSERT INTO implied_volatility "
                    "(ticker, date, close, high, low, open, volume) "
                    "VALUES (?, ?, ?, ?, ?, ?, ?)")
@@ -544,6 +558,52 @@ class SqliteDatabaseRepository(CollectionDatabaseRepository):
                 self.connection.rollback()
 
         self.connection.commit()
+
+    def insert_data_performance_index(self, data, ticker):
+        # Falls die Spalten ein MultiIndex sind, flache sie ab.
+        if isinstance(data.columns, pd.MultiIndex):
+            data.columns = data.columns.get_level_values(0)
+
+        # Wenn "Datetime" vorhanden ist, verwende diese Spalte als Datum.
+        if "Datetime" in data.columns:
+            data["Date"] = data["Datetime"]
+
+        # Falls "Date" nicht vorhanden ist, den Index zurücksetzen und ggf. umbenennen.
+        if "Date" not in data.columns:
+            data = data.reset_index()
+            if "Date" not in data.columns:
+                data.rename(columns={"index": "Date"}, inplace=True)
+
+        # Debug-Ausgabe: Zeige die Spaltennamen
+        print("Spalten nach reset_index:", data.columns)
+
+        c = self.connection.cursor()
+
+        for _, row in data.iterrows():
+            # Datum extrahieren – benutze "Date" (das ggf. aus "Datetime" stammt)
+            date_value = row["Date"]
+            if hasattr(date_value, 'strftime'):
+                date_str = date_value.strftime('%Y-%m-%d')
+            else:
+                date_str = str(date_value)
+
+            # Hole den Schlusskurs
+            close_val = row["Close"]
+
+            values = (ticker, date_str, close_val)
+            print("Einfügen:", values)
+
+            sql = ("INSERT INTO performance_index (ticker, date, close) VALUES (?, ?, ?)")
+            try:
+                c.execute(sql, values)
+                self.connection.commit()
+                print("Daten erfolgreich eingefügt.")
+            except Exception as e:
+                print("Fehler beim Einfügen der Daten:", e)
+                self.connection.rollback()
+
+        self.connection.commit()
+
     #endregion
 
     # ----------------------------------------------------------------

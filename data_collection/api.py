@@ -11,6 +11,7 @@ import aiohttp
 import datetime
 import logging
 import pandas as pd
+import os
 
 db_queue = Queue()
 
@@ -34,11 +35,14 @@ class PolygonApiClient:
             interest_rate_end_date,
             implied_volatility_start_date,
             implied_volatility_end_date,
+            performance_index_ticker,
+            performance_index_start_date,
+            performance_index_end_date,
             index_data_ticker,
             implied_volatility_ticker,
             fred_api_key,
             batch_size = 20000,
-            max_workers = 50,
+            max_workers = 50
     ):
         self.base_url = "https://api.polygon.io"
         self.api_key = api_key
@@ -61,6 +65,9 @@ class PolygonApiClient:
         self.index_data_ticker = index_data_ticker
         self.batch_size = batch_size
         self.max_workers = max_workers
+        self.performance_index_ticker = performance_index_ticker
+        self.performance_index_start_date = performance_index_start_date
+        self.performance_index_end_date = performance_index_end_date
 
         # Initialize a persistent session with default headers
         self.session = requests.Session()
@@ -491,17 +498,17 @@ class PolygonApiClient:
 
         for attempt in range(max_retries):
             try:
-                self.logger.info(f"📊 Fetching data for {ticker}... (Try {attempt + 1}/{max_retries})")
+                #self.logger.info(f"📊 Fetching data for {ticker}... (Try {attempt + 1}/{max_retries})")
                 data = yf.download(ticker, start=start_date, end=end_date, progress=False)
 
                 # ✅ Sicherstellen, dass `data` ein DataFrame ist
                 if not isinstance(data, pd.DataFrame):
-                    self.logger.error(f"⚠️ Fehler: `yf.download()` hat unerwartete Daten zurückgegeben. Inhalt:")
+                    #self.logger.error(f"⚠️ Fehler: `yf.download()` hat unerwartete Daten zurückgegeben. Inhalt:")
                     raise ValueError("yfinance returned a non-DataFrame object")
 
                 # ✅ Sicherstellen, dass `data` Spalten hat
                 if data.empty:
-                    self.logger.warning(f"⚠️ Keine Daten für {ticker} erhalten. Erneuter Versuch...")
+                    #self.logger.warning(f"⚠️ Keine Daten für {ticker} erhalten. Erneuter Versuch...")
                     raise ValueError("Empty Data")
 
                 # ✅ Daten formatieren
@@ -512,7 +519,7 @@ class PolygonApiClient:
                     raise ValueError("format_yfinance_data returned a non-DataFrame object")
 
                 if formatted_data.empty:
-                    self.logger.error(f"⚠️ Keine formatierbaren Daten für {ticker} erhalten. Erneuter Versuch...")
+                    #self.logger.error(f"⚠️ Keine formatierbaren Daten für {ticker} erhalten. Erneuter Versuch...")
                     raise ValueError("Formatted Data Empty")
 
                 # ✅ Index zurücksetzen
@@ -520,7 +527,7 @@ class PolygonApiClient:
 
                 # ✅ Daten in die DB einfügen
                 insert_func(formatted_data, ticker)
-                self.logger.info(f"✅ Daten gespeichert für {ticker}")
+                #self.logger.info(f"✅ Daten gespeichert für {ticker}")
                 return
 
             except Exception as e:
@@ -529,7 +536,7 @@ class PolygonApiClient:
                     time.sleep(wait_time)
                     wait_time *= 2  # Exponentielles Warten
                 else:
-                    self.logger.error(f"❌ Fehler für {ticker}: {e}")
+                    #self.logger.error(f"❌ Fehler für {ticker}: {e}")
                     break  # Kein erneuter Versuch bei anderen Fehlern
 
     #Der alte Stand hat ohne diese Funktion funktioniert, allerdings hat YahooFinance ihre API verändert
@@ -550,6 +557,63 @@ class PolygonApiClient:
         available_columns = [col for col in required_columns if col in input_df.columns]
 
         return input_df[available_columns]  # Rückgabe nur der relevanten Daten
+
+    def fetch_yfinance_data_excel(self, ticker, excel_path, insert_func):
+        """
+        Liest Daten aus einer Excel-Datei und speichert sie mithilfe der übergebenen Insert-Funktion.
+
+        Die Excel-Datei liegt im Verzeichnis 'excel_path' und hat den Dateinamen <ticker>.xlsx.
+        In der Excel-Datei wird davon ausgegangen, dass folgende Spalten existieren:
+          - Spalte A: "Index" (wird hier nicht verwendet)
+          - Spalte B: "Date" (enthält das Datum)
+          - Spalte C: "Close" (enthält den Schlusskurs)
+
+        Die Spaltenüberschriften werden unabhängig von Groß- und Kleinschreibung erfasst und in die
+        erwarteten Namen ("Date", "Close") gemappt. Anschließend werden die Daten chronologisch (frühestes
+        Datum zuerst) sortiert und an die Insert-Funktion übergeben.
+        """
+
+        try:
+            # Erstelle den vollständigen Dateipfad: excel_path + ticker + ".xlsx"
+            file_path = os.path.join(excel_path, f"{ticker}.xlsx")
+            self.logger.info(f"Lese Excel-Daten von: {file_path}")
+
+            # Lese die Excel-Datei
+            data = pd.read_excel(file_path)
+
+            # Passe die Spaltennamen an (unabhängig von Groß-/Kleinschreibung)
+            # Wir mappen die bekannten Spaltennamen zu den erwarteten:
+            #   "Date" und "Close". Falls "Index" vorhanden ist, bleibt diese Spalte erhalten.
+            col_mapping = {}
+            for col in data.columns:
+                col_lower = col.strip().lower()
+                if col_lower == "date":
+                    col_mapping[col] = "Date"
+                elif col_lower == "close":
+                    col_mapping[col] = "Close"
+                elif col_lower == "index":
+                    col_mapping[col] = "Index"
+                else:
+                    col_mapping[col] = col
+            data.rename(columns=col_mapping, inplace=True)
+            self.logger.info(f"Spalten nach Anpassung: {data.columns.tolist()}")
+
+            # Stelle sicher, dass die "Date"-Spalte vorhanden ist und als Datum interpretiert wird
+            if "Date" not in data.columns:
+                raise ValueError("Die Excel-Datei enthält keine 'Date'-Spalte.")
+            data["Date"] = pd.to_datetime(data["Date"], errors="coerce")
+            if data["Date"].isnull().all():
+                raise ValueError("Alle Einträge in der 'Date'-Spalte konnten nicht in Datumswerte konvertiert werden.")
+
+            # Sortiere die Daten chronologisch (frühestes Datum zuerst)
+            data.sort_values(by="Date", inplace=True)
+
+            # Rufe die übergebene Insert-Funktion auf, um die Daten in die DB einzufügen
+            insert_func(data, ticker)
+            self.logger.info(f"Daten aus Excel erfolgreich verarbeitet für {ticker}.")
+
+        except Exception as e:
+            self.logger.error(f"Fehler beim Verarbeiten der Excel-Daten für {ticker}: {e}")
 
     #endregion
 

@@ -116,6 +116,7 @@ def main():
         # Mappings für Index- und Volatilitätsdaten aus der .env-Datei
         index_data_mapping = parse_env_mapping("INDEX_DATA_MAPPING")
         implied_volatility_mapping = parse_env_mapping("IMPLIED_VOLATILITY_MAPPING")
+        performance_index_mapping = parse_env_mapping("PERFORMANCE_INDEX_MAPPING")
 
         # Liste aller Underlying Ticker und Contract Types aus der .env
         underlying_tickers = os.getenv('POLYGON_UNDERLYING_TICKER', 'UNKNOWN').replace(" ", "").upper().split(",")
@@ -156,6 +157,7 @@ def main():
             # Richtige Werte für Index und Volatilität aus der .env holen
             index_ticker = index_data_mapping.get(underlying_ticker, None)
             volatility_ticker = implied_volatility_mapping.get(underlying_ticker, None)
+            performance_index_ticker = performance_index_mapping.get(underlying_ticker, None)
 
             if index_ticker is None or volatility_ticker is None:
                 logger.warning(f"No index or volatility ticker mapping found for {underlying_ticker}. Skipping...")
@@ -187,6 +189,9 @@ def main():
                 implied_volatility_end_date=os.getenv('IMPLIED_VOLATILITY_END_DATE'),
                 index_data_ticker=index_ticker,  # Dynamisch aus .env
                 implied_volatility_ticker=volatility_ticker,  # Dynamisch aus .env
+                performance_index_ticker=performance_index_ticker, # Dynamisch aus .env
+                performance_index_start_date=os.getenv('PERFORMANCE_INDEX_START_DATE'),
+                performance_index_end_date=os.getenv('PERFORMANCE_INDEX_END_DATE'),
                 fred_api_key=os.getenv('FRED_API_KEY'),
                 batch_size=int(os.getenv('BATCH_COLLECTION_SIZE')),
             )
@@ -230,16 +235,6 @@ def main():
                     loop.close()
                 #endregion
 
-                #region Sammeln von Daten für Index
-                if parse_boolean(os.getenv('RUN_FETCH_CLOSING_CANDLES')):
-                    client.fetch_yfinance_data(
-                        ticker=client.index_data_ticker,
-                        start_date=client.closing_candles_start_date,
-                        end_date=client.closing_candles_end_date,
-                        insert_func=client.db_repository.insert_data_of_index
-                    )
-                #endregion
-
                 #region Sammeln von FRED-Daten
                 if parse_boolean(os.getenv('RUN_FETCH_FRED_INTEREST')):
                     series_dict = {
@@ -252,6 +247,16 @@ def main():
                         client.fetch_fred_data(series_id)
                 #endregion
 
+                #region Sammeln von Daten für Index
+                if parse_boolean(os.getenv('RUN_FETCH_CLOSING_CANDLES')):
+                    client.fetch_yfinance_data(
+                        ticker=client.index_data_ticker,
+                        start_date=client.closing_candles_start_date,
+                        end_date=client.closing_candles_end_date,
+                        insert_func=client.db_repository.insert_data_of_index
+                    )
+                #endregion
+
                 #region Sammeln der Impliziten Volatilität
                 if parse_boolean(os.getenv('RUN_FETCH_IMPLIED_VOLATILITY')):
                     client.fetch_yfinance_data(
@@ -262,9 +267,22 @@ def main():
                     )
                 #endregion
 
-                ##Performanceindex ^SP500TR von yfinance ziehen
-
-                ##Performanceindex XNDX aus excel ziehen
+                #region Sammeln des Performance Index
+                if parse_boolean(os.getenv('RUN_FETCH_PERFORMANCE_INDEX')):
+                    if underlying_ticker != "NDX":
+                        client.fetch_yfinance_data(
+                            ticker=client.performance_index_ticker,
+                            start_date=client.performance_index_start_date,
+                            end_date=client.performance_index_end_date,
+                            insert_func=client.db_repository.insert_data_performance_index
+                        )
+                    else:
+                        client.fetch_yfinance_data_excel(
+                            ticker=client.performance_index_ticker,
+                            excel_path=os.getenv('PERFORMANCE_INDEX_PATH_TO_EXCEL'),
+                            insert_func=client.db_repository.insert_data_performance_index
+                        )
+                #endregion
 
             except Exception as e:
                 logger.error(f"Error during additional fetching steps for {underlying_ticker}: {e}")
