@@ -8,3 +8,4 @@ errors.log
 *.sqlite
 *.sqlite-journal
 test
+archiv
