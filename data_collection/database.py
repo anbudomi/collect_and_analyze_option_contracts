@@ -16,7 +16,6 @@ from tqdm import tqdm
 class DatabaseType(Enum):
     SQLITE = 'sqlite'
 
-
 def get_collection_database_repository(type: DatabaseType) -> dict:
     """
     Erstellt eine Sammlung von Datenbank-Repositories für verschiedene Underlying-Ticker.

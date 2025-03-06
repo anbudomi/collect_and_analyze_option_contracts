@@ -82,8 +82,6 @@ def setup_logging(log_level=logging.INFO):
 
     return logger, current_log_folder
 
-
-
 # Mapping aus der .env einlesen und in Dicts umwandeln
 def parse_env_mapping(env_var):
     """Liest eine Komma-separierte Mapping-Zeichenkette aus der .env und wandelt sie in ein Dict um."""
