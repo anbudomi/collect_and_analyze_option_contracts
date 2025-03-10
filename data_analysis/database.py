@@ -1,147 +1,90 @@
 import os
-from abc import ABC, abstractmethod
 import sqlite3
-from tqdm import tqdm
-import time
+from abc import ABC, abstractmethod
+from datetime import datetime, timedelta
 
-def get_analysis_database_repository() -> 'OptionDataRepository':
-    """Erstellt und gibt eine Instanz von OptionDataRepository zurück."""
-    filename = os.getenv('DB_ANALYSIS_FILENAME')
-    db_path = os.getenv('DB_ANALYSIS_PATH')
 
-    # Sicherstellen, dass der Ordner existiert
+def get_prepared_database_repository() -> 'PreparedDataRepository':
+    """Erstellt und gibt eine Instanz von PreparedDataRepository zurück. Löscht die bestehende DB, falls vorhanden."""
+    filename = os.getenv('PREPARED_DB_FILENAME')
+    db_path = os.getenv('PREPARED_DB_PATH')
+
     if not os.path.exists(db_path):
         os.makedirs(db_path, exist_ok=True)
 
     full_db_path = os.path.join(db_path, filename)
-    return OptionDataRepository(full_db_path)
+
+    # Falls die Datenbank bereits existiert, löschen
+    if os.path.exists(full_db_path):
+        os.remove(full_db_path)
+
+    return PreparedDataRepository(full_db_path)
 
 
-class AnalysisDatabaseRepository(ABC):
-
+class PreparedDatabaseRepository(ABC):
     @abstractmethod
-    def analysis_db_migrate(self):
+    def prepared_data_migrate(self, index):
         ...
 
-    @abstractmethod
-    def bulk_insert(self, data, table_name):
-        ...
 
-
-class OptionDataRepository(AnalysisDatabaseRepository):
-    """Datenbankklasse für die Optionsdaten."""
+class PreparedDataRepository(PreparedDatabaseRepository):
+    """Datenbankklasse für vorbereitete Optionsdaten."""
 
     def __init__(self, db_path):
-        super().__init__()
         self.db_path = db_path
-        self.connection = self.get_analysis_database_connection()
+        self.connection = self.get_prepared_database_connection()
         self.cursor = self.connection.cursor()
 
-    def analysis_db_migrate(self):
-        """Stellt sicher, dass alle Analyse-Tabellen existieren."""
-        try:
-            c = self.connection.cursor()
+    def get_prepared_database_connection(self):
+        connection = sqlite3.connect(self.db_path)
+        return connection
 
-            table_schema = """
+    def prepared_data_migrate(self, index):
+        """Erstellt eine Tabelle für den angegebenen Index, falls sie nicht existiert."""
+        table_name = f"prepared_{index.lower()}_data"
+        self.cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {table_name} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ticker TEXT,
+                date TEXT,
+                option_type TEXT,
                 execution_price REAL,
-                market_price_base REAL,
-                remaining_time INTEGER,
-                risk_free_interest REAL,
-                trade_date TEXT,
+                market_base_price REAL,
+                remaining_days INTEGER,
+                remaining_time REAL,
+                risk_free_rate REAL,
                 market_price_option REAL,
-                implied_volatility REAL
+                implied_vola_percent REAL,
+                implied_vola_dec REAL,
+                dividend_yield REAL,
+                BSM REAL,
+                absolute_error REAL,
+                relative_error REAL,
+                moneyness REAL,
+                UNIQUE(ticker, date)  -- Stellt sicher, dass eine Kombination aus date und ticker nur einmal vorkommt
             )
-            """
+        """)
+        self.connection.commit()
 
-            indices = os.getenv("INDICES_TO_ANALYZE", "").split(",")  # Indizes aus .env
-            table_names = [f"sorted_{index.lower()}_data" for index in indices]
+    def bulk_insert(self, data, index):
+        """Führt einen Bulk-Insert für vorbereitete Daten aus."""
+        table_name = f"prepared_{index.lower()}_data"
 
-            for table in table_names:
-                c.execute(table_schema.format(table_name=table))
+        insert_query = f"""
+            INSERT INTO {table_name} (
+                ticker, execution_price, market_base_price, remaining_days,
+                risk_free_rate, date, market_price_option, implied_vola_percent
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """
 
-            self.connection.commit()
-            print(f"✅ Tabellen erstellt: {table_names}")
-        except sqlite3.Error as e:
-            print(f"❌ Fehler beim Erstellen der Tabellen: {e}")
-
-    def bulk_insert(self, data, table_name):
-        """Massiv optimierter Bulk-Insert mit Index-Checks und Batch-Processing."""
         try:
-            start_time = time.time()
-            print(f"🔄 Starte optimierten Bulk-Insert für {len(data)} Einträge in {table_name}...")
-
-            # PRAGMA-Optimierungen
-            self.cursor.execute("PRAGMA synchronous = OFF")
-            self.cursor.execute("PRAGMA journal_mode = MEMORY")
-            self.cursor.execute("PRAGMA temp_store = MEMORY")
-            self.cursor.execute("PRAGMA cache_size = 100000")
-
-            # Stelle sicher, dass Index existiert
-            self.cursor.execute(
-                f"CREATE INDEX IF NOT EXISTS idx_ticker_trade_date ON {table_name} (ticker, trade_date);")
-
-            with self.connection:
-                self.cursor.execute("BEGIN TRANSACTION;")
-
-                batch_size = 10000  # Kleinere Batches für effizienteres Arbeiten
-                num_batches = (len(data) // batch_size) + (1 if len(data) % batch_size else 0)
-
-                for batch_start in tqdm(range(0, len(data), batch_size), desc=f"Batch-Insert in {table_name}",
-                                        unit="batch"):
-                    batch = data[batch_start:batch_start + batch_size]
-
-                    # Korrekte Anzahl an Platzhaltern für (ticker, trade_date)
-                    placeholders = ",".join(["(?, ?)" for _ in batch])
-                    query = f"SELECT ticker, trade_date FROM {table_name} WHERE (ticker, trade_date) IN ({placeholders})"
-
-                    # Parameter als flache Liste übergeben (statt Liste von Tupeln)
-                    self.cursor.execute(query, [val for row in batch for val in (row[0], row[5])])
-                    existing_entries = set(self.cursor.fetchall())
-
-                    # Batch-Update für existierende Einträge
-                    update_query = f"""
-                    UPDATE {table_name} SET 
-                        execution_price = COALESCE(?, execution_price),
-                        market_price_base = COALESCE(?, market_price_base),
-                        remaining_time = COALESCE(?, remaining_time),
-                        risk_free_interest = COALESCE(?, risk_free_interest),
-                        market_price_option = COALESCE(?, market_price_option),
-                        implied_volatility = COALESCE(?, implied_volatility)
-                    WHERE ticker = ? AND trade_date = ?
-                    """
-
-                    self.cursor.executemany(update_query, [
-                        (row[1], row[2], row[3], row[4], row[6], row[7], row[0], row[5])
-                        for row in batch if (row[0], row[5]) in existing_entries
-                    ])
-
-                    # Batch-Insert für neue Einträge
-                    insert_query = f"""
-                    INSERT INTO {table_name} (
-                        ticker, execution_price, market_price_base, remaining_time,
-                        risk_free_interest, trade_date, market_price_option,
-                        implied_volatility
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """
-
-                    self.cursor.executemany(insert_query, [
-                        row for row in batch if (row[0], row[5]) not in existing_entries
-                    ])
-
-                self.cursor.execute("COMMIT;")  # Transaktion abschließen
-
-            total_time = time.time() - start_time
-            print(f"✅ Bulk-Insert abgeschlossen für {table_name} in {total_time:.2f} Sekunden.")
-
+            self.cursor.executemany(insert_query, data)
+            self.connection.commit()
+            print(f"✅ {len(data)} Datensätze erfolgreich in {table_name} eingefügt.")
         except sqlite3.Error as e:
-            print(f"❌ Fehler beim Einfügen in {table_name}: {e}")
+            print(f"⚠ Fehler beim Einfügen der Daten in {table_name}: {e}")
+            self.connection.rollback()
 
     def close(self):
         """Schließt die Datenbankverbindung."""
         self.connection.close()
-
-    def get_analysis_database_connection(self):
-        return sqlite3.connect(self.db_path, isolation_level=None, check_same_thread=False)

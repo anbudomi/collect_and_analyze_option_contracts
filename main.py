@@ -4,10 +4,10 @@ import dotenv
 import datetime
 import asyncio
 from data_collection.database import DatabaseType
-from data_analysis.datahandling import DataHandler, DataAnalyzer, DataPreparer
+from data_analysis.datapreparer import DataPreparer
 from data_collection.api import PolygonApiClient
 from data_collection.database import get_collection_database_repository
-from data_analysis.database import get_analysis_database_repository
+from data_analysis.database import get_prepared_database_repository
 import shutil
 
 #.env frühestmöglich auslesen!
@@ -295,7 +295,7 @@ def main():
     #region 3) Aufruf Datenverarbeitung + Datenanalyse
     if parse_boolean(os.getenv('RUN_DATA_ANALYSIS')):
         indices = os.getenv("INDICES_TO_PREPARE", "").split(",")
-
+        prepared_data_repo = get_prepared_database_repository()
         index_data_mapping = parse_env_mapping("INDEX_DATA_MAPPING")
 
         for index in indices:
@@ -311,47 +311,23 @@ def main():
             # ----------------------------------------------------------------
 
             #region 3.1) Aufruf Datenvorbereitung: Vorbereitung für Datenanalyse
-            if parse_boolean(os.getenv('RUN_DATA_HANDLER')):
-                print(f"📊 Running DataHandler für {index}...")
 
-                data_handler = DataHandler(
-                    raw_database_path=os.getenv("RAW_DATABASE_PATH"),
-                    raw_db_names=[raw_db_name],  # Einzelne DB pro Iteration
-                    sorted_db_path=os.path.join(os.getenv("DB_ANALYSIS_PATH"), os.getenv("DB_ANALYSIS_FILENAME")),
-                    batch_size=int(os.getenv("ANALYSIS_BATCH_SIZE"))
-                )
-
-                db_repository = get_analysis_database_repository()
-                db_repository.analysis_db_migrate()  # Stellt sicher, dass alle Tabellen existieren
-                data_handler.process_contracts(db_repository)
-                db_repository.close()
-
-            # ✅ **DataPreparer: Prepare Data for further calculations**
+            # Führt den DataPreparer aus: Der letzte Schritt vor der Analyse
             if parse_boolean(os.getenv('RUN_DATA_PREPARER')):
                 print(f"📈 Running DataPreparer für {index}...")
 
                 data_preparer = DataPreparer(
-                    sorted_db_path=os.path.join(os.getenv("SORTED_DB_PATH"), os.getenv("SORTED_DB_FILENAME")),
+                    raw_database_path = os.getenv("RAW_DATABASE_PATH"),
                     prepared_db_path=os.path.join(os.getenv("PREPARED_DB_PATH"), os.getenv("PREPARED_DB_FILENAME")),
-                    indices_to_prepare=os.getenv("INDICES_TO_PREPARE"),
-                    index=index
+                    index=index,
+                    index_ticker=index_ticker
                 )
 
-                #Kopiert die ursprüngliche sorted Datenbank, falls noch nicht vorhanden
-                data_preparer.initialize_prepared_db()
-                data_preparer.fetch_yfinance_data(
-                    index_ticker,
-                    os.getenv("CLOSING_CANDLES_START_DATE"),
-                    os.getenv("CLOSING_CANDLES_END_DATE")
-                )
+                #Initialisiert Tabellen für entsprechenden Index
+                prepared_data_repo.prepared_data_migrate(index)
 
-                #Konvertiert Volatilität von [%] zu Dezimal
-                if parse_boolean(os.getenv('RUN_CONVERT_VOLA')):
-                    data_preparer.convert_implied_volatility()
+                data_preparer.process_and_filter_contracts(prepared_data_repo)
 
-                #Berechnet dividend_yield
-                if parse_boolean(os.getenv('RUN_DIVIDEND_YIELD')):
-                    data_preparer.calc_dividend_yield()
             #endregion
 
             # ----------------------------------------------------------------
@@ -359,7 +335,7 @@ def main():
             # ----------------------------------------------------------------
 
             #region 3.2) Aufruf Datenanalyse
-            if parse_boolean(os.getenv('RUN_DATA_ANALYZER')):
+            '''if parse_boolean(os.getenv('RUN_DATA_ANALYZER')):
                 print(f"📈 Running DataAnalyzer für {index}...")
 
                 data_analyzer = DataAnalyzer(
@@ -367,7 +343,7 @@ def main():
                     indices_to_analyze=[index]  # Einzelne Index-Analyse pro Durchlauf
                 )
 
-                data_analyzer.analyze_and_plot()
+                data_analyzer.analyze_and_plot()'''
             #endregion
         print("🎉 Alle Indizes wurden erfolgreich verarbeitet!")
     #endregion

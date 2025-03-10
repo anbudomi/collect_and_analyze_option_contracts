@@ -9,3 +9,7 @@ errors.log
 *.sqlite-journal
 test
 error_logging
+testing.py
+testing_2.py
+temp_datahandler.py
+old_datapreparer.py
