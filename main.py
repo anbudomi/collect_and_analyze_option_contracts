@@ -7,7 +7,7 @@ from data_collection.database import DatabaseType
 from data_analysis.datapreparer import DataPreparer
 from data_collection.api import PolygonApiClient
 from data_collection.database import get_collection_database_repository
-from data_analysis.database import get_prepared_database_repository
+from data_analysis.database import get_prepared_database_repository, get_prefiltered_database_repository
 import shutil
 
 #.env frühestmöglich auslesen!
@@ -292,43 +292,42 @@ def main():
     # 3) Aufruf Datenanalyse : Erstellt Prepared Datenbank zum Weiterverarbeiten und führt Auswertung durch
     # ----------------------------------------------------------------
 
-    #region 3) Aufruf Datenverarbeitung + Datenanalyse
+    # region 3) Aufruf Datenverarbeitung + Datenanalyse
     if parse_boolean(os.getenv('RUN_DATA_ANALYSIS')):
         indices = os.getenv("INDICES_TO_PREPARE", "").split(",")
         prepared_data_repo = get_prepared_database_repository()
+        prefiltered_repo = get_prefiltered_database_repository()  # Neues Repository für prefiltered_data_db.sqlite
         index_data_mapping = parse_env_mapping("INDEX_DATA_MAPPING")
 
         for index in indices:
             print(f"🔄 Starte Verarbeitung für Index: {index}")
-
             index_ticker = index_data_mapping.get(index, None)
 
-            # 📌 **Korrekter Datenbanknamen für die Raw-Daten**
+            # 📌 **Korrekter Datenbankname für die Raw-Daten**
             raw_db_name = f"rawdata_{index.lower()}_db.sqlite"
 
             # ----------------------------------------------------------------
             # 3.1) Aufruf Datenvorbereitung
             # ----------------------------------------------------------------
-
-            #region 3.1) Aufruf Datenvorbereitung: Vorbereitung für Datenanalyse
-
-            # Führt den DataPreparer aus: Der letzte Schritt vor der Analyse
             if parse_boolean(os.getenv('RUN_DATA_PREPARER')):
                 print(f"📈 Running DataPreparer für {index}...")
 
                 data_preparer = DataPreparer(
-                    raw_database_path = os.getenv("RAW_DATABASE_PATH"),
+                    raw_database_path=os.getenv("RAW_DATABASE_PATH"),
+                    prefiltered_db_path=os.getenv("PREFILTERED_DB_PATH"),
                     prepared_db_path=os.path.join(os.getenv("PREPARED_DB_PATH"), os.getenv("PREPARED_DB_FILENAME")),
                     index=index,
                     index_ticker=index_ticker
                 )
 
-                #Initialisiert Tabellen für entsprechenden Index
+                # Initialisiere die Tabelle in der prefiltered-Datenbank
+                prefiltered_repo.prefiltered_data_migrate(index)
+                # Falls benötigt, auch in der prepared-Datenbank
                 prepared_data_repo.prepared_data_migrate(index)
 
-                data_preparer.process_and_filter_contracts(prepared_data_repo)
-
-            #endregion
+                # Verarbeitung: Die Daten werden in die prefiltered-Datenbank geschrieben.
+                data_preparer.process_prefiltered_data(prefiltered_repo)
+            # endregion
 
             # ----------------------------------------------------------------
             # 3.2) Aufruf Datenanalyse
