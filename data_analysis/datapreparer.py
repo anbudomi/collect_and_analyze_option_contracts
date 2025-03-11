@@ -13,7 +13,161 @@ class DataPreparer:
         self.prepared_db_path = prepared_db_path
         self.index = index
         self.index_ticker = index_ticker
-        self.batch_size = 100000
+        self.batch_size = 1000
+
+    def process_prepared_data(self, prepared_data_repo):
+        """
+        Liest alle Call-Einträge aus der prefiltered_DB (für den aktuellen Index)
+        und sucht jeweils nach einem passenden Put-Pendant.
+        Für jedes gefundene Paar wird mittels Call-Put-Parity der theoretische Callpreis
+        berechnet und dessen Abweichung (absolute und relative Fehler) ermittelt.
+        Liegt die relative Abweichung innerhalb von ±40%, werden **beide** Einträge
+        (Call und Put) in die prepared_data_DB übernommen.
+
+        Es werden zudem 10 gefundene Paare (Details) zur Kontrolle ausgegeben.
+        """
+        # Verbindung zur prefiltered_DB herstellen
+        conn = sqlite3.connect(self.prefiltered_db_path)
+        cursor = conn.cursor()
+        table_name = f"prefiltered_{self.index.lower()}_data"
+
+        # Alle Put-Einträge einmalig abrufen und in einem Dictionary indexieren.
+        # Schlüssel: (underlying_ticker, date, execution_price, remaining_days)
+        put_query = f"SELECT * FROM {table_name} WHERE contract_type = 'put'"
+        put_rows = cursor.execute(put_query).fetchall()
+        put_dict = {}
+        for row in put_rows:
+            key = (row[2], row[3], row[8], row[6])
+            # Falls mehrfach vorhanden, nehmen wir den ersten Eintrag.
+            if key not in put_dict:
+                put_dict[key] = row
+
+        # Alle Call-Einträge abrufen
+        query_calls = f"SELECT * FROM {table_name} WHERE contract_type = 'call'"
+        call_rows = cursor.execute(query_calls).fetchall()
+
+        accepted_data = []
+        printed_pairs_count = 0
+
+        for call_row in call_rows:
+            # Annahme: Spaltenreihenfolge gemäß CREATE TABLE:
+            # 0: id, 1: ticker, 2: underlying_ticker, 3: date, 4: contract_type,
+            # 5: expiration_date, 6: remaining_days, 7: remaining_time, 8: execution_price,
+            # 9: market_price_base, 10: market_price_option, 11: implied_vola_percent,
+            # 12: implied_vola_dec, 13: risk_free_rate, 14: dividend_yield, 15: BSM,
+            # 16: absolute_error, 17: relative_error, 18: moneyness
+            call_ticker = call_row[1]
+            underlying_ticker = call_row[2]
+            date_str = call_row[3]
+            expiration_date = call_row[5]
+            remaining_days = call_row[6]
+            remaining_time = call_row[7]
+            execution_price = call_row[8]
+            market_price_base = call_row[9]
+            call_market_price_option = call_row[10]
+            implied_vola_percent = call_row[11]
+            implied_vola_dec = call_row[12]
+            risk_free_rate = call_row[13]
+            dividend_yield = call_row[14]
+            BSM_value = call_row[15]
+            original_abs_err_call = call_row[16]
+            original_rel_err_call = call_row[17]
+            moneyness = call_row[18]
+
+            # Erzeuge den Schlüssel für den entsprechenden Put
+            key = (underlying_ticker, date_str, execution_price, remaining_days)
+            if key not in put_dict:
+                continue  # Kein Pendant gefunden
+
+            put_row = put_dict[key]
+            put_ticker = put_row[1]
+            put_market_price_option = put_row[10]
+            original_abs_err_put = put_row[16]
+            original_rel_err_put = put_row[17]
+
+            # Berechne den theoretischen Callpreis mittels Call-Put-Parity:
+            # call_theoretical = put_market_price_option + (market_price_base - execution_price * exp(-risk_free_rate * remaining_time))
+            call_theoretical = put_market_price_option + (
+                        market_price_base - execution_price * math.exp(-risk_free_rate * remaining_time))
+
+            # Berechne die Fehler (nur für Filterung und Debug-Ausgabe)
+            computed_abs_err = abs(call_theoretical - call_market_price_option)
+            computed_rel_err = computed_abs_err / call_market_price_option if call_market_price_option != 0 else float(
+                'inf')
+
+            # Filter: Nur wenn die relative Abweichung ≤ 40% ist, übernehmen wir das Paar
+            if computed_rel_err > 0.4:
+                continue
+
+            # Debug-Ausgabe: Gib bis zu 10 Paar-Debug-Informationen aus
+            if printed_pairs_count < 10:
+                print(f"Pair {printed_pairs_count + 1}:")
+                print(f"  Call Ticker: {call_ticker}")
+                print(f"  Put Ticker:  {put_ticker}")
+                print(f"  Call Market Price: {call_market_price_option}")
+                print(f"  Put Market Price:  {put_market_price_option}")
+                print(f"  Theoretical Call Price: {call_theoretical:.4f}")
+                print(f"  Computed Abs Error: {computed_abs_err:.4f}")
+                print(f"  Computed Rel Error: {computed_rel_err:.4f}")
+                printed_pairs_count += 1
+
+            # Erstelle den Datensatz für die prepared_DB: zunächst den Call-Eintrag ...
+            prepared_tuple_call = (
+                call_ticker,  # ticker
+                date_str,  # date
+                "call",  # option_type
+                execution_price,  # execution_price
+                market_price_base,  # market_base_price
+                remaining_days,  # remaining_days
+                remaining_time,  # remaining_time
+                risk_free_rate,  # risk_free_rate
+                call_market_price_option,  # market_price_option
+                implied_vola_percent,  # implied_vola_percent
+                implied_vola_dec,  # implied_vola_dec
+                dividend_yield,  # dividend_yield
+                BSM_value,  # BSM
+                original_abs_err_call,  # absolute_error (aus prefiltered)
+                original_rel_err_call,  # relative_error (aus prefiltered)
+                moneyness  # moneyness
+            )
+            # ... und dann den Put-Eintrag
+            prepared_tuple_put = (
+                put_ticker,  # ticker
+                date_str,  # date
+                "put",  # option_type
+                execution_price,  # execution_price
+                market_price_base,  # market_base_price
+                remaining_days,  # remaining_days
+                remaining_time,  # remaining_time
+                risk_free_rate,  # risk_free_rate
+                put_market_price_option,  # market_price_option
+                put_row[11],  # implied_vola_percent (aus put_row)
+                put_row[12],  # implied_vola_dec (aus put_row)
+                put_row[14],  # dividend_yield (aus put_row)
+                put_row[15],  # BSM (aus put_row)
+                original_abs_err_put,  # absolute_error (aus prefiltered)
+                original_rel_err_put,  # relative_error (aus prefiltered)
+                put_row[18]  # moneyness (aus put_row)
+            )
+
+            # Füge beide Einträge der Liste hinzu
+            accepted_data.append(prepared_tuple_call)
+            accepted_data.append(prepared_tuple_put)
+
+            # Batch-weise Insert prüfen
+            if len(accepted_data) >= self.batch_size:
+                prepared_data_repo.bulk_insert(accepted_data, self.index)
+                accepted_data = []
+
+        conn.close()
+
+        # Falls noch Einträge übrig sind, bulk-insert durchführen
+        if accepted_data:
+            prepared_data_repo.bulk_insert(accepted_data, self.index)
+            print(
+                f"✅ {(len(accepted_data) // 2) + printed_pairs_count} Paare (insgesamt {len(accepted_data)} Einträge) in prepared_data_db eingefügt.")
+        else:
+            print("✅ Alle Paare wurden bereits batchweise eingefügt.")
 
     def process_prefiltered_data(self, prefiltered_repo):
         """

@@ -314,19 +314,21 @@ def main():
 
                 data_preparer = DataPreparer(
                     raw_database_path=os.getenv("RAW_DATABASE_PATH"),
-                    prefiltered_db_path=os.getenv("PREFILTERED_DB_PATH"),
+                    prefiltered_db_path=os.path.join(os.getenv("PREFILTERED_DB_PATH"), os.getenv("PREFILTERED_DB_FILENAME")),
                     prepared_db_path=os.path.join(os.getenv("PREPARED_DB_PATH"), os.getenv("PREPARED_DB_FILENAME")),
                     index=index,
                     index_ticker=index_ticker
                 )
 
-                # Initialisiere die Tabelle in der prefiltered-Datenbank
-                prefiltered_repo.prefiltered_data_migrate(index)
-                # Falls benötigt, auch in der prepared-Datenbank
-                prepared_data_repo.prepared_data_migrate(index)
 
-                # Verarbeitung: Die Daten werden in die prefiltered-Datenbank geschrieben.
-                data_preparer.process_prefiltered_data(prefiltered_repo)
+
+                if parse_boolean(os.getenv('RUN_DATA_PREFILTER')):
+                    # Initialisiere die Tabelle in der prefiltered-Datenbank
+                    prefiltered_repo.prefiltered_data_migrate(index)
+                    data_preparer.process_prefiltered_data(prefiltered_repo)
+                if parse_boolean(os.getenv('RUN_DATA_FINALIZER')):
+                    prepared_data_repo.prepared_data_migrate(index)
+                    data_preparer.process_prepared_data(prepared_data_repo)
             # endregion
 
             # ----------------------------------------------------------------

@@ -8,7 +8,8 @@ from datetime import datetime, timedelta
 # ------------------------------
 
 def get_prepared_database_repository() -> 'PreparedDataRepository':
-    """Erstellt und gibt eine Instanz von PreparedDataRepository zurück. Löscht die bestehende DB, falls vorhanden."""
+    """Erstellt und gibt eine Instanz von PreparedDataRepository zurück.
+       Falls die DB bereits existiert, wird sie nicht gelöscht."""
     prepared_db_filename = os.getenv('PREPARED_DB_FILENAME')
     prepared_db_path = os.getenv('PREPARED_DB_PATH')
 
@@ -17,11 +18,8 @@ def get_prepared_database_repository() -> 'PreparedDataRepository':
 
     full_db_path = os.path.join(prepared_db_path, prepared_db_filename)
 
-    # Falls die Datenbank bereits existiert, löschen
-    if os.path.exists(full_db_path):
-        os.remove(full_db_path)
-
     return PreparedDataRepository(full_db_path)
+
 
 
 class PreparedDatabaseRepository(ABC):
@@ -72,9 +70,10 @@ class PreparedDataRepository(PreparedDatabaseRepository):
         table_name = f"prepared_{index.lower()}_data"
         insert_query = f"""
             INSERT INTO {table_name} (
-                ticker, execution_price, market_base_price, remaining_days,
-                risk_free_rate, date, market_price_option, implied_vola_percent
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ticker, date, option_type, execution_price, market_base_price, remaining_days,
+                remaining_time, risk_free_rate, market_price_option, implied_vola_percent, implied_vola_dec,
+                dividend_yield, BSM, absolute_error, relative_error, moneyness
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         try:
             self.cursor.executemany(insert_query, data)
