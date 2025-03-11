@@ -8,6 +8,7 @@ from data_analysis.datapreparer import DataPreparer
 from data_collection.api import PolygonApiClient
 from data_collection.database import get_collection_database_repository
 from data_analysis.database import get_prepared_database_repository, get_prefiltered_database_repository
+from data_analysis.dataanalyzer import DataAnalyzer
 import shutil
 
 #.env frühestmöglich auslesen!
@@ -320,8 +321,6 @@ def main():
                     index_ticker=index_ticker
                 )
 
-
-
                 if parse_boolean(os.getenv('RUN_DATA_PREFILTER')):
                     # Initialisiere die Tabelle in der prefiltered-Datenbank
                     prefiltered_repo.prefiltered_data_migrate(index)
@@ -331,22 +330,23 @@ def main():
                     data_preparer.process_prepared_data(prepared_data_repo)
             # endregion
 
-            # ----------------------------------------------------------------
-            # 3.2) Aufruf Datenanalyse
-            # ----------------------------------------------------------------
+        # ----------------------------------------------------------------
+        # 3.2) Aufruf Datenanalyse
+        # ----------------------------------------------------------------
 
-            #region 3.2) Aufruf Datenanalyse
-            '''if parse_boolean(os.getenv('RUN_DATA_ANALYZER')):
-                print(f"📈 Running DataAnalyzer für {index}...")
+        #region 3.2) Aufruf Datenanalyse
+        if parse_boolean(os.getenv('RUN_DATA_ANALYZER')):
 
-                data_analyzer = DataAnalyzer(
-                    sorted_db_path=os.path.join(os.getenv("DB_ANALYSIS_PATH"), os.getenv("DB_ANALYSIS_FILENAME")),
-                    indices_to_analyze=[index]  # Einzelne Index-Analyse pro Durchlauf
-                )
+            indices = os.getenv("INDICES_TO_ANALYZE").split(",")
+            indices = [idx.strip() for idx in indices if idx.strip()]
+            data_analyzer = DataAnalyzer(
+                prepared_db_path=os.path.join(os.getenv("PREPARED_DB_PATH"), os.getenv("PREPARED_DB_FILENAME")),
+                indices = indices  # Einzelne Index-Analyse pro Durchlauf
+            )
 
-                data_analyzer.analyze_and_plot()'''
-            #endregion
-        print("🎉 Alle Indizes wurden erfolgreich verarbeitet!")
+            data_analyzer.run_analysis_and_plotting()
+        #endregion
+    print("🎉 Alle Indizes wurden erfolgreich verarbeitet!")
     #endregion
 
 

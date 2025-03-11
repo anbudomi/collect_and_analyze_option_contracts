@@ -262,8 +262,11 @@ class DataPreparer:
             abs_err = round(abs(market_price_option - bsm), 2)
             rel_err = round(abs_err / market_price_option, 4) if market_price_option != 0 else 0.0
 
-            # Moneyness (als Verhältnis, z.B. S/K - 1)
-            moneyness = round((market_price_base / strike_price) - 1, 4)
+            # Moneyness
+            if contract_type == "call":
+                moneyness = round((market_price_base - strike_price) / strike_price, 4)
+            elif contract_type == "put":
+                moneyness = round((strike_price - market_price_base) / strike_price, 4)
 
             # Hier: execution_price wird aus contracts (strike_price) genommen.
             data_tuple = (
@@ -304,7 +307,7 @@ class DataPreparer:
         Parameter:
           contract_type: 'call' oder 'put'
           S: Underlying-Preis (market_price_base)
-          K: Strike-Preis (aus contracts.strike_price)
+          K: Strike-Price (aus contracts.strike_price)
           r: Risikofreier Zinssatz (risk_free_rate)
           q: Dividendenrendite (dividend_yield)
           sigma: Implizite Volatilität (in Dezimal, z. B. 0.20 für 20%)
@@ -334,7 +337,8 @@ class DataPreparer:
             price = K * math.exp(-r * T) * N(-d2) - S * math.exp(-q * T) * N(-d1)
         else:
             # Fallback: Standardmäßig Call-Berechnung
-            price = S * math.exp(-q * T) * N(d1) - K * math.exp(-r * T) * N(d2)
+            print("Weder call noch put gefunden")
+            price = -100.0          # Um Fehler festzustellen, unrealistischen Wert einfügen
 
         return round(price, 2)
 
