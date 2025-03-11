@@ -94,7 +94,7 @@ class PreparedDataRepository(PreparedDatabaseRepository):
 # ------------------------------
 
 def get_prefiltered_database_repository() -> 'PrefilteredDataRepository':
-    """Erstellt und gibt eine Instanz von PrefilteredDataRepository zurück. Löscht die bestehende DB, falls vorhanden."""
+    """Erstellt und gibt eine Instanz von PrefilteredDataRepository zurück. Erstellt die DB, falls sie nicht existiert."""
     prefiltered_db_filename = os.getenv('PREFILTERED_DB_FILENAME')
     prefiltered_db_path = os.getenv('PREFILTERED_DB_PATH')
 
@@ -103,11 +103,8 @@ def get_prefiltered_database_repository() -> 'PrefilteredDataRepository':
 
     full_db_path = os.path.join(prefiltered_db_path, prefiltered_db_filename)
 
-    if os.path.exists(full_db_path):
-        os.remove(full_db_path)
-
+    # Entferne das Löschen der Datenbank, damit sie bestehen bleibt.
     return PrefilteredDataRepository(full_db_path)
-
 
 class PrefilteredDataRepository:
     """Datenbankklasse für vorgefilterte Optionsdaten."""
@@ -138,6 +135,11 @@ class PrefilteredDataRepository:
                 implied_vola_percent REAL,
                 implied_vola_dec REAL,
                 risk_free_rate REAL,
+                dividend_yield REAL,
+                BSM REAL,
+                absolute_error REAL,
+                relative_error REAL,
+                moneyness REAL,
                 UNIQUE(ticker, date)
             )
         """)
@@ -150,8 +152,9 @@ class PrefilteredDataRepository:
             INSERT INTO {table_name} (
                 ticker, underlying_ticker, date, contract_type, expiration_date,
                 remaining_days, remaining_time, execution_price, market_price_base,
-                market_price_option, implied_vola_percent, implied_vola_dec, risk_free_rate
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                market_price_option, implied_vola_percent, implied_vola_dec, risk_free_rate,
+                dividend_yield, BSM, absolute_error, relative_error, moneyness
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         try:
             self.cursor.executemany(insert_query, data)
@@ -164,3 +167,5 @@ class PrefilteredDataRepository:
     def close(self):
         """Schließt die Datenbankverbindung."""
         self.connection.close()
+
+
