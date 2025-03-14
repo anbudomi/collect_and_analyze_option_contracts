@@ -15,6 +15,12 @@ import os
 
 db_queue = Queue()
 
+# ----------------------------------------------------------------
+# 1) PolygonApiClient Klasse
+# ----------------------------------------------------------------
+
+#region 1) PolygonApiClient Klasse
+
 class PolygonApiClient:
 
     #region Client-Init : Initiiert PolygonClient
@@ -82,7 +88,7 @@ class PolygonApiClient:
     #endregion
 
     # ----------------------------------------------------------------
-    # 1) Helfer-Funktionen
+    # 2) Helfer-Funktionen
     # ----------------------------------------------------------------
 
     #region Helfer-Funktionen : Prüft verschiedene Rahmenbedingungen
@@ -128,7 +134,7 @@ class PolygonApiClient:
     #endregion
 
     # ----------------------------------------------------------------
-    # 2) Error-Handling
+    # 3) Error-Handling
     # ----------------------------------------------------------------
 
     #region Error-Handling
@@ -149,7 +155,7 @@ class PolygonApiClient:
     #endregion
 
     # ----------------------------------------------------------------
-    # 3) Datensammlung von Contracts-Daten
+    # 4) Datensammlung von Contracts-Daten
     # ----------------------------------------------------------------
 
     #region Datensammlung für Contracts : Sammelt alle Contracts für die angegebenen Parameter
@@ -284,7 +290,7 @@ class PolygonApiClient:
     #endregion
 
     # ----------------------------------------------------------------
-    # 4) Datensammlung von Aggregates
+    # 5) Datensammlung von Aggregates
     # ----------------------------------------------------------------
 
     # region Datensammlung für Aggregates : Sammelt alle Aggregates für die angegebenen Parameter
@@ -484,7 +490,7 @@ class PolygonApiClient:
     #endregion
 
     # ----------------------------------------------------------------
-    # 5) Zusätzliche Daten : Close-Werte, FRED-Daten, implizite Volatilität
+    # 6) Zusätzliche Daten : Close-Werte, FRED-Daten, implizite Volatilität
     # ----------------------------------------------------------------
 
     #region Datensammlung von Yfinance-Daten : Close-Werte des angegebenen Index und implizite Volatilität
@@ -644,7 +650,7 @@ class PolygonApiClient:
     #endregion
 
     # ----------------------------------------------------------------
-    # 6) Helferfunktionen für API-Anfragen
+    # 7) Helferfunktionen für API-Anfragen
     # ----------------------------------------------------------------
 
     #region Helferfunktionen für API-Handling
@@ -694,3 +700,5 @@ class PolygonApiClient:
         return None  # Wenn alle Versuche scheitern
 
     #endregion
+
+#endregion

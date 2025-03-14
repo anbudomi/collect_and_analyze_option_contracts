@@ -341,10 +341,11 @@ def main():
             indices = [idx.strip() for idx in indices if idx.strip()]
             data_analyzer = DataAnalyzer(
                 prepared_db_path=os.path.join(os.getenv("PREPARED_DB_PATH"), os.getenv("PREPARED_DB_FILENAME")),
-                indices = indices  # Einzelne Index-Analyse pro Durchlauf
+                indices = indices
             )
 
             data_analyzer.run_analysis_and_plotting()
+
         #endregion
     print("🎉 Alle Indizes wurden erfolgreich verarbeitet!")
     #endregion

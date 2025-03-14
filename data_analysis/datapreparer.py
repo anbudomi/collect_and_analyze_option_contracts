@@ -4,7 +4,11 @@ import sqlite3
 import datetime
 from datetime import timedelta
 
+# ----------------------------------------------------------------
+# 1) DataPreparer Klasse
+# ----------------------------------------------------------------
 
+#region 1) DataPreparer Klasse
 class DataPreparer:
     def __init__(self, raw_database_path, prefiltered_db_path, prepared_db_path, index, index_ticker):
         self.raw_db_path = f"{raw_database_path}/rawdata_{index.lower()}_db.sqlite"
@@ -14,6 +18,11 @@ class DataPreparer:
         self.index_ticker = index_ticker
         self.batch_size = 100000
 
+    # ----------------------------------------------------------------
+    # 2) Allgemeine Aufrufe für prefiltered- und prepared-Datenbank
+    # ----------------------------------------------------------------
+
+    #region 2) Allgemeine Aufrufe für prefiltered- und prepared-Datenbank
     def extract_base_ticker(self, ticker):
         """
         Erwartet ein Format wie: "O:NDX180105C06475000"
@@ -299,7 +308,13 @@ class DataPreparer:
             prefiltered_repo.bulk_insert_prefiltered(valid_rows, self.index)
 
         raw_conn.close()
+    #endregion
 
+    # ----------------------------------------------------------------
+    # 3) Berechnung für den BSM-Preis
+    # ----------------------------------------------------------------
+
+    #region 3) Berechnung für den BSM-Preis
     def get_bsm_price(self, contract_type, S, K, r, q, sigma, T):
         """
         Berechnet den Black-Scholes-Merton Preis für einen Call oder Put.
@@ -341,9 +356,13 @@ class DataPreparer:
             price = -100.0          # Um Fehler festzustellen, unrealistischen Wert einfügen
 
         return round(price, 2)
+    #endregion
 
-    # --- Hilfsmethoden für Dividend Yield ------------------
+    # ----------------------------------------------------------------
+    # 4) Berechnung für Dividend Yield
+    # ----------------------------------------------------------------
 
+    #region 4) Berechnung für Dividend Yield
     def get_nearest_value(self, data_dict, target_date_str, max_offset=10):
         """
         Sucht in data_dict (Mapping date -> Wert) nach target_date_str.
@@ -385,8 +404,13 @@ class DataPreparer:
         ratio = (perf_current / perf_prev) / (price_current / price_prev)
         div_yield = ratio - 1
         return round(div_yield, 4)
+    #endregion
 
-    # --- Die übrigen Methoden (risk-free rate etc.) bleiben unverändert ---
+    # ----------------------------------------------------------------
+    # 5) Berechnung für Risk Free Rate
+    # ----------------------------------------------------------------
+
+    #region 5) Berechnung für Risk Free Rate
     def compute_risk_free_rate(self, cursor, date_str, remaining_days):
         series_ids = self.get_treasury_bill_id(remaining_days)
         if not series_ids:
@@ -456,3 +480,5 @@ class DataPreparer:
             return ['DTB3', 'DTB6']
         if remaining_time > 182 and remaining_time <= 364:
             return ['DTB6', 'DTB1YR']
+    #endregion
+#endregion

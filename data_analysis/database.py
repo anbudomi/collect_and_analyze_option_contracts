@@ -1,12 +1,12 @@
 import os
 import sqlite3
 from abc import ABC, abstractmethod
-from datetime import datetime, timedelta
 
-# ------------------------------
-# PreparedDataRepository (bestehende Version)
-# ------------------------------
+# ----------------------------------------------------------------
+# 1) Prepared-Datenbank
+# ----------------------------------------------------------------
 
+#region 1) Prepared-Datenbank
 def get_prepared_database_repository() -> 'PreparedDataRepository':
     """Erstellt und gibt eine Instanz von PreparedDataRepository zurück.
        Falls die DB bereits existiert, wird sie nicht gelöscht."""
@@ -21,12 +21,10 @@ def get_prepared_database_repository() -> 'PreparedDataRepository':
     return PreparedDataRepository(full_db_path)
 
 
-
 class PreparedDatabaseRepository(ABC):
     @abstractmethod
     def prepared_data_migrate(self, index):
         ...
-
 
 class PreparedDataRepository(PreparedDatabaseRepository):
     """Datenbankklasse für vorbereitete Optionsdaten."""
@@ -86,12 +84,13 @@ class PreparedDataRepository(PreparedDatabaseRepository):
     def close(self):
         """Schließt die Datenbankverbindung."""
         self.connection.close()
+#endregion
 
+# ----------------------------------------------------------------
+# 2) Prefiltered-Datenbank
+# ----------------------------------------------------------------
 
-# ------------------------------
-# PrefilteredDataRepository (neu)
-# ------------------------------
-
+#region 2) Prefiltered-Datenbank
 def get_prefiltered_database_repository() -> 'PrefilteredDataRepository':
     """Erstellt und gibt eine Instanz von PrefilteredDataRepository zurück. Erstellt die DB, falls sie nicht existiert."""
     prefiltered_db_filename = os.getenv('PREFILTERED_DB_FILENAME')
@@ -105,7 +104,12 @@ def get_prefiltered_database_repository() -> 'PrefilteredDataRepository':
     # Entferne das Löschen der Datenbank, damit sie bestehen bleibt.
     return PrefilteredDataRepository(full_db_path)
 
-class PrefilteredDataRepository:
+class PrefilteredDatabaseRepository(ABC):
+    @abstractmethod
+    def prefiltered_data_migrate(self, index):
+        ...
+
+class PrefilteredDataRepository(PrefilteredDatabaseRepository):
     """Datenbankklasse für vorgefilterte Optionsdaten."""
     def __init__(self, db_path):
         self.db_path = db_path
@@ -166,5 +170,5 @@ class PrefilteredDataRepository:
     def close(self):
         """Schließt die Datenbankverbindung."""
         self.connection.close()
-
+#endregion
 
