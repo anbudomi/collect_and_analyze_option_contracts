@@ -10,13 +10,13 @@ from datetime import timedelta
 
 #region 1) DataPreparer Klasse
 class DataPreparer:
-    def __init__(self, raw_database_path, prefiltered_db_path, prepared_db_path, index, index_ticker):
+    def __init__(self, raw_database_path, prefiltered_db_path, prepared_db_path, index, index_ticker, batch_size):
         self.raw_db_path = f"{raw_database_path}/rawdata_{index.lower()}_db.sqlite"
         self.prefiltered_db_path = prefiltered_db_path  # Pfad zur prefiltered_DB
         self.prepared_db_path = prepared_db_path
         self.index = index
         self.index_ticker = index_ticker
-        self.batch_size = 100000
+        self.batch_size = batch_size
 
     # ----------------------------------------------------------------
     # 2) Allgemeine Aufrufe für prefiltered- und prepared-Datenbank

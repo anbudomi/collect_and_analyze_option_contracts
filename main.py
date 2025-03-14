@@ -318,7 +318,8 @@ def main():
                     prefiltered_db_path=os.path.join(os.getenv("PREFILTERED_DB_PATH"), os.getenv("PREFILTERED_DB_FILENAME")),
                     prepared_db_path=os.path.join(os.getenv("PREPARED_DB_PATH"), os.getenv("PREPARED_DB_FILENAME")),
                     index=index,
-                    index_ticker=index_ticker
+                    index_ticker=index_ticker,
+                    batch_size=int(os.getenv("PREPARATION_BATCH_SIZE"))
                 )
 
                 if parse_boolean(os.getenv('RUN_DATA_PREFILTER')):
