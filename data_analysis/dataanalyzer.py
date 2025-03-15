@@ -1477,34 +1477,52 @@ class DataAnalyzer:
         # Für Laufzeit-Kategorien:
         days_colors = {"0-30 Tage": "blue", "31-90 Tage": "green", ">90 Tage": "red"}
 
+        months = np.arange(1, 13)
+        month_labels = [calendar.month_abbr[m] for m in months]
+
         # --- FIGUR A: Moneyness-Kategorien ---
         fig_m, axes_m = plt.subplots(nrows=2, ncols=1, figsize=(10, 8), sharex=True)
         fig_m.suptitle("Monatliche durchschnittliche relative Abweichung nach Moneyness-Kategorie (2020)", fontsize=12)
-        months = np.arange(1, 13)
-        month_labels = [calendar.month_abbr[m] for m in months]
 
         # SPX OBEN, NDX UNTEN (Farbgebung gemäß moneyness_colors)
         if "SPX" in data_moneyness:
             spx_m = data_moneyness["SPX"]
             for cat in spx_m.columns:
-                axes_m[0].plot(months, spx_m[cat], marker='o', label=cat, color=moneyness_colors.get(cat))
+                # Dünne, transparente Verbindungslinie mit Markern
+                axes_m[0].plot(months, spx_m[cat], marker='o', linestyle='-', linewidth=0.5,
+                               alpha=0.5, color=moneyness_colors.get(cat), label=cat)
+                # Punkte mit voller Deckkraft
+                axes_m[0].plot(months, spx_m[cat], marker='o', linestyle='None', alpha=1,
+                               color=moneyness_colors.get(cat))
             axes_m[0].set_title("S&P 500 (2020)")
             axes_m[0].set_ylabel("Relative Abweichung (%)")
-            axes_m[0].legend(title="Moneyness-Kategorie")
+            leg_m0 = axes_m[0].legend(title="Moneyness-Kategorie")
             axes_m[0].grid(True, linestyle='--', alpha=0.7)
         if "NDX" in data_moneyness:
             ndx_m = data_moneyness["NDX"]
             for cat in ndx_m.columns:
-                axes_m[1].plot(months, ndx_m[cat], marker='o', label=cat, color=moneyness_colors.get(cat))
+                axes_m[1].plot(months, ndx_m[cat], marker='o', linestyle='-', linewidth=0.5,
+                               alpha=0.5, color=moneyness_colors.get(cat), label=cat)
+                axes_m[1].plot(months, ndx_m[cat], marker='o', linestyle='None', alpha=1,
+                               color=moneyness_colors.get(cat))
             axes_m[1].set_title("Nasdaq 100 (2020)")
             axes_m[1].set_ylabel("Relative Abweichung (%)")
             axes_m[1].set_xlabel("Monate")
-            axes_m[1].legend(title="Moneyness-Kategorie")
+            leg_m1 = axes_m[1].legend(title="Moneyness-Kategorie")
             axes_m[1].grid(True, linestyle='--', alpha=0.7)
 
         for ax in axes_m:
             ax.set_xticks(months)
             ax.set_xticklabels(month_labels, rotation=0)
+
+        # Legendenanpassung: Dickere, weniger transparente Linien
+        for leg in [leg_m0, leg_m1]:
+            for handle in leg.legend_handles:
+                try:
+                    handle.set_linewidth(2.0)
+                    handle.set_alpha(1.0)
+                except Exception:
+                    pass
 
         fig_m.tight_layout(rect=[0, 0, 1, 0.96])
         save_path_m = os.path.join(self.plots_dir, "monthly_rel_error_moneyness_2020.png")
@@ -1515,28 +1533,41 @@ class DataAnalyzer:
         fig_d, axes_d = plt.subplots(nrows=2, ncols=1, figsize=(10, 8), sharex=True)
         fig_d.suptitle("Monatliche durchschnittliche relative Abweichung nach Laufzeit-Kategorie (2020)", fontsize=12)
 
-        # SPX OBEN, NDX UNTEN (Farbgebung gemäß days_colors)
         if "SPX" in data_days:
             spx_d = data_days["SPX"]
             for cat in spx_d.columns:
-                axes_d[0].plot(months, spx_d[cat], marker='o', label=cat, color=days_colors.get(cat))
+                axes_d[0].plot(months, spx_d[cat], marker='o', linestyle='-', linewidth=0.5,
+                               alpha=0.5, color=days_colors.get(cat), label=cat)
+                axes_d[0].plot(months, spx_d[cat], marker='o', linestyle='None', alpha=1,
+                               color=days_colors.get(cat))
             axes_d[0].set_title("S&P 500 (2020)")
             axes_d[0].set_ylabel("Relative Abweichung (%)")
             axes_d[0].set_xlabel("Monate")
-            axes_d[0].legend(title="Laufzeit-Kategorie")
+            leg_d0 = axes_d[0].legend(title="Laufzeit-Kategorie")
             axes_d[0].grid(True, linestyle='--', alpha=0.7)
         if "NDX" in data_days:
             ndx_d = data_days["NDX"]
             for cat in ndx_d.columns:
-                axes_d[1].plot(months, ndx_d[cat], marker='o', label=cat, color=days_colors.get(cat))
+                axes_d[1].plot(months, ndx_d[cat], marker='o', linestyle='-', linewidth=0.5,
+                               alpha=0.5, color=days_colors.get(cat), label=cat)
+                axes_d[1].plot(months, ndx_d[cat], marker='o', linestyle='None', alpha=1,
+                               color=days_colors.get(cat))
             axes_d[1].set_title("Nasdaq 100 (2020)")
             axes_d[1].set_ylabel("Relative Abweichung (%)")
-            axes_d[1].legend(title="Laufzeit-Kategorie")
+            leg_d1 = axes_d[1].legend(title="Laufzeit-Kategorie")
             axes_d[1].grid(True, linestyle='--', alpha=0.7)
 
         for ax in axes_d:
             ax.set_xticks(months)
             ax.set_xticklabels(month_labels, rotation=0)
+
+        for leg in [leg_d0, leg_d1]:
+            for handle in leg.legend_handles:
+                try:
+                    handle.set_linewidth(2.0)
+                    handle.set_alpha(1.0)
+                except Exception:
+                    pass
 
         fig_d.tight_layout(rect=[0, 0, 1, 0.96])
         save_path_d = os.path.join(self.plots_dir, "monthly_rel_error_days_2020.png")
@@ -1544,6 +1575,7 @@ class DataAnalyzer:
         print(f"Plot gespeichert unter: {save_path_d}")
 
         plt.show()
+
     #endregion
 
     # ----------------------------------------------------------------
