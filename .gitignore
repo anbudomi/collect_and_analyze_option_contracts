@@ -18,4 +18,5 @@ plots
 plots_final.zip
 requirements.txt
 work_with_data.py
-testing2.py
+*.xlsx
+testing*.py
