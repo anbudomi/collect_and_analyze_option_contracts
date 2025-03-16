@@ -12,7 +12,9 @@ import calendar
 
 #region 1) Helfer-Funktion
 def query_db(db_path, query):
-    """Führt den gegebenen SQL-Query in der Datenbank aus und gibt ein DataFrame zurück."""
+    """
+    Führt den gegebenen SQL-Query in der Datenbank aus und gibt ein DataFrame zurück.
+    """
     conn = sqlite3.connect(db_path)
     df = pd.read_sql_query(query, conn)
     conn.close()
@@ -26,9 +28,11 @@ def query_db(db_path, query):
 
 #region 2) DataAnalyzer Klasse
 class DataAnalyzer:
-    def __init__(self, prepared_db_path, indices):
+    def __init__(self, prepared_db_path, indices, prefiltered_db_path, prefiltered_db_name):
         self.prepared_db_path = prepared_db_path
         self.indices = indices
+        self.prefiltered_db_path = prefiltered_db_path
+        self.prefiltered_db_name = prefiltered_db_name
         self.db_connection = sqlite3.connect(self.prepared_db_path)
         self.cursor = self.db_connection.cursor()
         self.plots_dir = None  # wird in run_analysis_and_plotting gesetzt
@@ -90,6 +94,9 @@ class DataAnalyzer:
 
         # 2.16) Plottet die monatliche Gesamtzahl der Contracts (2020)
         self.monthly_total_contracts_2020()
+
+        #2.17) Analysiert die Gesamtanzahl an Einträgen mit remaining_days > 90 (vor Filterung und danach)
+        self.get_entries_for_remaining_days_90plus()
     #endregion
 
     # ----------------------------------------------------------------
@@ -226,10 +233,10 @@ class DataAnalyzer:
         ax.legend()
         ax.grid(axis='y', linestyle='--', alpha=0.7)
 
-        # Formatierung der Y-Achse auf Millionen (falls gewünscht)
+        # Formatierung der Y-Achse auf Millionen
         ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x / 1e6:.1f} Mio'))
 
-        # Speichere den Plot im gewünschten Verzeichnis
+        # Speichere den Plot
         save_path = os.path.join(self.plots_dir, "plot_restlaufzeit.png")
         plt.savefig(save_path)
         print(f"Plot gespeichert unter: {save_path}")
@@ -301,7 +308,7 @@ class DataAnalyzer:
         ax.grid(axis='y', linestyle='--', alpha=0.7)
         ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x/1e6:.1f} Mio'))
 
-        # Speichere den Plot im gewünschten Verzeichnis
+        # Speichere den Plot
         save_path = os.path.join(self.plots_dir, "Verteilung Moneyness.png")
         plt.savefig(save_path)
         print(f"Plot gespeichert unter: {save_path}")
@@ -381,7 +388,7 @@ class DataAnalyzer:
 
         plt.tight_layout()
 
-        # Speichere den Plot im gewünschten Verzeichnis
+        # Speichere den Plot
         save_path = os.path.join(self.plots_dir, "relative_deviation_2018_2019.png")
         plt.savefig(save_path)
         print(f"Plot gespeichert unter: {save_path}")
@@ -506,7 +513,7 @@ class DataAnalyzer:
 
         plt.tight_layout()
 
-        # Speichere den Plot im gewünschten Verzeichnis
+        # Speichere den Plot
         save_path = os.path.join(self.plots_dir, "Monatliche relative Abweichung Moneyness in 2018_2019.png")
         plt.savefig(save_path)
         print(f"Plot gespeichert unter: {save_path}")
@@ -588,7 +595,6 @@ class DataAnalyzer:
         Die Ergebnisse werden in zwei Balkendiagrammen (oben: S&P 500, unten: Nasdaq 100) dargestellt
         und der Plot wird als "Durchschnittliche rel Abweichung nach Moneyness 2019_2019.png"
         im Plot-Verzeichnis gespeichert.
-        (Die Reihenfolge der x-Achsen-Beschriftung wird umgedreht.)
         """
         group_dict = {}
 
@@ -653,7 +659,7 @@ class DataAnalyzer:
         plt.xticks(rotation=45)
         plt.tight_layout()
 
-        # Speichere den Plot im gewünschten Verzeichnis
+        # Speichere den Plot
         save_path = os.path.join(self.plots_dir, "Durchschnittliche rel Abweichung nach Moneyness 2019_2019.png")
         plt.savefig(save_path)
         print(f"Plot gespeichert unter: {save_path}")
@@ -906,7 +912,7 @@ class DataAnalyzer:
 
         plt.tight_layout()
 
-        # Speichere den Plot im gewünschten Verzeichnis
+        # Speichere den Plot
         save_path = os.path.join(self.plots_dir, "Monatliche relative Abweichung nach Laufzeitgruppen 2018_2019.png")
         plt.savefig(save_path)
         print(f"Plot gespeichert unter: {save_path}")
@@ -921,7 +927,7 @@ class DataAnalyzer:
     #region 2.12) Plottet die durchschnittliche relative Abweichung nach Moneyness & Restlaufzeit (2018-2019)
     def avg_rel_error_by_moneyness_remaining_days_2018_2019(self, at_money_tolerance=0.01):
         """
-        Erstellt zwei gruppierte Balkendiagramme (oben: Nasdaq 100, unten: S&P 500),
+        Erstellt zwei gruppierte Balkendiagramme (oben: S&P 500, unten: Nasdaq 100),
         die die durchschnittliche relative Abweichung (in %) nach Moneyness-Kategorie
         und Restlaufzeit-Kategorie (0-30 Tage, 31-90 Tage, >90 Tage) im Zeitraum
         2018-2019 zeigen.
@@ -942,10 +948,9 @@ class DataAnalyzer:
         "Monatliche relative Abweichung Moneyness_Laufzeit 2018_2019.png"
         gespeichert.
         """
-        # Moneyness-Bins und -Labels (reihenfolge = im Geld, am Geld, aus dem Geld)
+        # Moneyness-Bins und -Labels (Reihenfolge: im Geld, am Geld, aus dem Geld)
         moneyness_bins = [-np.inf, -at_money_tolerance, at_money_tolerance, np.inf]
         moneyness_labels = ["aus dem Geld", "am Geld", "im Geld"]
-        # Wir wollen "im Geld" vorne, dann "am Geld", dann "aus dem Geld" => wir reindexen später.
 
         # Restlaufzeit-Bins und -Labels
         days_bins = [0, 30, 90, np.inf]
@@ -965,7 +970,7 @@ class DataAnalyzer:
             query = f"SELECT date, relative_error, moneyness, remaining_days FROM {table_name}"
             df = query_db(self.prepared_db_path, query)
 
-            # Filter 2018-2019 und relative_error -> Prozent
+            # Filter 2018-2019 und relative_error in Prozent umrechnen
             df['date'] = pd.to_datetime(df['date'])
             df = df[(df['date'].dt.year >= 2018) & (df['date'].dt.year <= 2019)].copy()
             df['relative_error_percent'] = df['relative_error'] * 100
@@ -988,10 +993,8 @@ class DataAnalyzer:
             # Gruppierung: durchschnittliche relative Abweichung pro (moneyness_cat, days_cat)
             grouped = df.groupby(['moneyness_cat', 'days_cat'])['relative_error_percent'].mean().unstack('days_cat')
 
-            # Reindex für die gewünschte Spalten- und Zeilen-Reihenfolge
-            # 1) days_labels (Spalten) in der Reihenfolge 0-30, 31-90, >90
+            # Reindex für gewünschte Spalten- und Zeilen-Reihenfolge
             grouped = grouped.reindex(columns=days_labels)
-            # 2) moneyness in der Reihenfolge "im Geld", "am Geld", "aus dem Geld"
             grouped = grouped.reindex(index=final_moneyness_order)
 
             data_dict[ticker] = grouped
@@ -1003,53 +1006,53 @@ class DataAnalyzer:
         # --- Plot-Vorbereitung ---
         fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(10, 10), sharex=True)
 
-        # --- Plot für Nasdaq 100 (oberer Subplot) ---
-        for t in self.indices:
-            if t.upper() == "NDX":
-                ndx_grouped = data_dict[t]
-                # Erstellen eines gruppierten Balkendiagramms
-                ndx_plot = ndx_grouped.plot(
-                    kind="bar",
-                    ax=axes[0],
-                    color=colors,
-                    width=0.8  # Breite der Balken
-                )
-                axes[0].set_title("Durchschnittliche relative Abweichung - Nasdaq 100 (2018-2019)")
-                axes[0].set_ylabel("Durchschnittliche relative Abweichung (%)")
-                axes[0].legend(title="Laufzeitgruppe")
-                axes[0].grid(axis='y', linestyle='--', alpha=0.7)
-                # Werte über die Balken schreiben
-                for container in axes[0].containers:
-                    axes[0].bar_label(container, fmt='%.2f', padding=3)
-
-        # --- Plot für S&P 500 (unterer Subplot) ---
+        # --- Plot für S&P 500 (oberer Subplot) ---
         for t in self.indices:
             if t.upper() == "SPX":
                 spx_grouped = data_dict[t]
                 spx_plot = spx_grouped.plot(
                     kind="bar",
+                    ax=axes[0],
+                    color=colors,
+                    width=0.8
+                )
+                axes[0].set_title("Durchschnittliche relative Abweichung - S&P 500 (2018-2019)")
+                axes[0].set_ylabel("Durchschnittliche relative Abweichung (%)")
+                axes[0].legend(title="Laufzeitgruppe")
+                axes[0].grid(axis='y', linestyle='--', alpha=0.7)
+                for container in axes[0].containers:
+                    axes[0].bar_label(container, fmt='%.2f', padding=3)
+
+        # --- Plot für Nasdaq 100 (unterer Subplot) ---
+        for t in self.indices:
+            if t.upper() == "NDX":
+                ndx_grouped = data_dict[t]
+                ndx_plot = ndx_grouped.plot(
+                    kind="bar",
                     ax=axes[1],
                     color=colors,
                     width=0.8
                 )
-                axes[1].set_title("Durchschnittliche relative Abweichung - S&P 500 (2018-2019)")
+                axes[1].set_title("Durchschnittliche relative Abweichung - Nasdaq 100 (2018-2019)")
                 axes[1].set_xlabel("Moneyness-Kategorie")
                 axes[1].set_ylabel("Durchschnittliche relative Abweichung (%)")
                 axes[1].legend(title="Laufzeitgruppe")
                 axes[1].grid(axis='y', linestyle='--', alpha=0.7)
-                # Werte über die Balken schreiben
                 for container in axes[1].containers:
                     axes[1].bar_label(container, fmt='%.2f', padding=3)
 
         plt.xticks(rotation=45)
         plt.tight_layout()
 
-        # Plot speichern
         save_path = os.path.join(self.plots_dir, "Monatliche relative Abweichung Moneyness_Laufzeit 2018_2019.png")
         plt.savefig(save_path)
         print(f"Plot gespeichert unter: {save_path}")
 
         plt.show()
+
+        # Hinweis: Die Variablen spx_plot und ndx_plot enthalten den Rückgabewert der plot()-Funktion.
+        # Sie werden hier nicht weiter verwendet, da die Darstellung direkt über die Axes-Objekte erfolgt.
+
     #endregion
 
     # ----------------------------------------------------------------
@@ -1075,7 +1078,6 @@ class DataAnalyzer:
         # Dictionary zum Speichern der monatlich aggregierten Daten
         monthly_data = {}
 
-        # Wir fokussieren uns auf SPX (S&P 500) und NDX (Nasdaq 100).
         for ticker in self.indices:
             table_name = f"prepared_{ticker.lower()}_data"
             query = f"SELECT date, relative_error FROM {table_name}"
@@ -1174,7 +1176,7 @@ class DataAnalyzer:
 
         plt.tight_layout()
 
-        # Speichere den Plot im gewünschten Verzeichnis
+        # Speichere den Plot
         save_path = os.path.join(self.plots_dir, "monthly_rel_error_2020.png")
         plt.savefig(save_path)
         print(f"Plot gespeichert unter: {save_path}")
@@ -1198,8 +1200,6 @@ class DataAnalyzer:
         # Dictionary zum Speichern der wöchentlich aggregierten Daten
         weekly_data = {}
 
-        # Fokussieren uns auf SPX (S&P 500) und NDX (Nasdaq 100),
-        # können aber auch weitere Ticker in self.indices unterstützen.
         for ticker in self.indices:
             table_name = f"prepared_{ticker.lower()}_data"
             query = f"SELECT date, relative_error FROM {table_name}"
@@ -1273,7 +1273,7 @@ class DataAnalyzer:
 
         plt.tight_layout()
 
-        # Speichere den Plot im gewünschten Verzeichnis
+        # Speichere den Plot
         save_path = os.path.join(self.plots_dir, "weekly_rel_error_2020.png")
         plt.savefig(save_path)
         print(f"Plot gespeichert unter: {save_path}")
@@ -1299,7 +1299,6 @@ class DataAnalyzer:
         # Dictionary zum Speichern der monatlich aggregierten Daten
         monthly_data = {}
 
-        # Fokussiere dich auf SPX (S&P 500) und NDX (Nasdaq 100)
         for ticker in self.indices:
             table_name = f"prepared_{ticker.lower()}_data"
             query = f"SELECT date, relative_error FROM {table_name}"
@@ -1367,7 +1366,7 @@ class DataAnalyzer:
 
         plt.tight_layout()
 
-        # Speichere den Plot im gewünschten Verzeichnis
+        # Speichere den Plot
         save_path = os.path.join(self.plots_dir, "monthly_rel_error_2020_2022.png")
         plt.savefig(save_path)
         print(f"Plot gespeichert unter: {save_path}")
@@ -1733,4 +1732,61 @@ class DataAnalyzer:
         plt.show()
     #endregion
 
+    # ----------------------------------------------------------------
+    # 2.17) Analysiert die Gesamtanzahl an Einträgen mit remaining_days > 90 (vor Filterung und danach)
+    # ----------------------------------------------------------------
+
+    #region 2.17) Analysiert die Gesamtanzahl an Einträgen mit remaining_days > 90 (vor Filterung und danach)
+    def get_entries_for_remaining_days_90plus(self):
+        """
+        Für jeden Ticker in self.indices wird der Anteil der Einträge berechnet,
+        bei denen 'remaining_days' > 90 ist.
+
+        Es werden zwei Auswertungen pro Ticker durchgeführt:
+         - Für die prefiltered-Datenbank: Tabelle "prefiltered_<ticker.lower()>_data"
+         - Für die prepared-Datenbank:   Tabelle "prepared_<ticker.lower()>_data"
+
+        Die Ergebnisse (Gesamteinträge, Einträge mit remaining_days > 90 und prozentualer Anteil)
+        werden formatiert ausgegeben.
+        """
+        # Erstelle den vollständigen Pfad zur prefiltered-Datenbank
+        prefiltered_db_full_path = os.path.join(self.prefiltered_db_path, self.prefiltered_db_name)
+
+        for ticker in self.indices:
+            # -------------------------------
+            # Auswertung für die prefiltered DB
+            # -------------------------------
+            table_prefiltered = f"prefiltered_{ticker.lower()}_data"
+            conn_prefiltered = sqlite3.connect(prefiltered_db_full_path)
+            cursor_prefiltered = conn_prefiltered.cursor()
+            cursor_prefiltered.execute(f"SELECT COUNT(*) FROM {table_prefiltered}")
+            total_prefiltered = cursor_prefiltered.fetchone()[0]
+            cursor_prefiltered.execute(f"SELECT COUNT(*) FROM {table_prefiltered} WHERE remaining_days > 90")
+            count_prefiltered = cursor_prefiltered.fetchone()[0]
+            conn_prefiltered.close()
+            percentage_prefiltered = (count_prefiltered / total_prefiltered * 100) if total_prefiltered > 0 else 0
+
+            print(f"Ergebnisse für Ticker {ticker} (prefiltered):")
+            print(f"  Gesamteinträge                  : {total_prefiltered}")
+            print(f"  Einträge mit 'remaining_days' > 90: {count_prefiltered}")
+            print(f"  Prozentualer Anteil             : {percentage_prefiltered:.2f}%")
+            print("=" * 50)
+
+            # -------------------------------
+            # Auswertung für die prepared DB
+            # -------------------------------
+            table_prepared = f"prepared_{ticker.lower()}_data"
+            self.cursor.execute(f"SELECT COUNT(*) FROM {table_prepared}")
+            total_prepared = self.cursor.fetchone()[0]
+            self.cursor.execute(f"SELECT COUNT(*) FROM {table_prepared} WHERE remaining_days > 90")
+            count_prepared = self.cursor.fetchone()[0]
+            percentage_prepared = (count_prepared / total_prepared * 100) if total_prepared > 0 else 0
+
+            print(f"Ergebnisse für Ticker {ticker} (prepared):")
+            print(f"  Gesamteinträge                  : {total_prepared}")
+            print(f"  Einträge mit 'remaining_days' > 90: {count_prepared}")
+            print(f"  Prozentualer Anteil             : {percentage_prepared:.2f}%")
+            print("=" * 50)
+
+    #endregion
 #endregion

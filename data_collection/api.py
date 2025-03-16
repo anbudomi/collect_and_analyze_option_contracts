@@ -23,7 +23,7 @@ db_queue = Queue()
 
 class PolygonApiClient:
 
-    #region Client-Init : Initiiert PolygonClient
+    #region Client-Init: Initiiert PolygonClient
     def __init__(
             self,
             api_key,
@@ -91,9 +91,11 @@ class PolygonApiClient:
     # 2) Helfer-Funktionen
     # ----------------------------------------------------------------
 
-    #region Helfer-Funktionen : Prüft verschiedene Rahmenbedingungen
+    #region Helfer-Funktionen: Prüft verschiedene Rahmenbedingungen
     def ensure_datetime(self, date):
-        """Konvertiert einen String in ein `datetime`-Objekt, falls nötig."""
+        """
+        Konvertiert einen String in ein `datetime`-Objekt, falls nötig.
+        """
         if isinstance(date, datetime.datetime):
             return date
         elif isinstance(date, str):
@@ -127,7 +129,9 @@ class PolygonApiClient:
         return True
 
     def validate_date_range(self):
-        """Überprüft, dass: start_date <= end_date."""
+        """
+        Überprüft, dass: start_date <= end_date.
+        """
         if self.start_date > self.end_date:
             raise ValueError("Start date cannot be after end date.")
         return True
@@ -139,7 +143,9 @@ class PolygonApiClient:
 
     #region Error-Handling
     def is_transient_error(exception):
-        """ Prüft, ob es sich um einen transienten Fehler handelt (429, 5XX) oder eine allgemeine requests-Exception. """
+        """
+        Prüft, ob es sich um einen transienten Fehler handelt (429, 5XX) oder eine allgemeine requests-Exception.
+        """
         if isinstance(exception, requests.exceptions.RequestException):
             response = getattr(exception, 'response', None)
             if response and response.status_code in [429] + list(range(500, 600)):
@@ -158,9 +164,11 @@ class PolygonApiClient:
     # 4) Datensammlung von Contracts-Daten
     # ----------------------------------------------------------------
 
-    #region Datensammlung für Contracts : Sammelt alle Contracts für die angegebenen Parameter
+    #region Datensammlung für Contracts: Sammelt alle Contracts für die angegebenen Parameter
     def run_fetch_contracts(self, max_workers=10):
-        """ Startet mehrere Worker-Threads zur Parallelverarbeitung von Trading-Days. """
+        """
+        Startet mehrere Worker-Threads zur Parallelverarbeitung von Trading-Days.
+        """
         trading_days = self.get_trading_days()
         q = Queue()
 
@@ -190,7 +198,9 @@ class PolygonApiClient:
         db_thread.join()
 
     def worker(self, q):
-        """Verarbeitet Trading-Days aus der Queue und ruft fetch_and_store_contracts() auf."""
+        """
+        Verarbeitet Trading-Days aus der Queue und ruft fetch_and_store_contracts() auf.
+        """
         while True:
             try:
                 day = q.get(block=True, timeout=5)  # Blockiert bis zu 5 Sekunden
@@ -205,7 +215,9 @@ class PolygonApiClient:
             q.task_done()
 
     def db_worker(self):
-        """ Arbeitet alle DB-Inserts aus der Queue ab. """
+        """
+        Arbeitet alle DB-Inserts aus der Queue ab.
+        """
         while True:
             chunk = db_queue.get()
             if chunk is None:
@@ -293,7 +305,7 @@ class PolygonApiClient:
     # 5) Datensammlung von Aggregates
     # ----------------------------------------------------------------
 
-    # region Datensammlung für Aggregates : Sammelt alle Aggregates für die angegebenen Parameter
+    # region Datensammlung für Aggregates: Sammelt alle Aggregates für die angegebenen Parameter
     def fetch_and_store_aggregates(self, max_workers=10, batch_size=20000):
         """
         Holt historische Aggregates-Daten für alle Contracts aus der Datenbank und speichert sie.
@@ -477,7 +489,6 @@ class PolygonApiClient:
     def run_fetch_and_store_aggregates(self):
         """
         Startet die asynchrone Verarbeitung im Event-Loop.
-        Falls bereits ein Event-Loop läuft (z.B. in Jupyter Notebooks oder modernen Python-Versionen), wird `asyncio.run()` verwendet.
         """
         try:
             loop = asyncio.get_running_loop()
@@ -490,7 +501,7 @@ class PolygonApiClient:
     #endregion
 
     # ----------------------------------------------------------------
-    # 6) Zusätzliche Daten : Close-Werte, FRED-Daten, implizite Volatilität
+    # 6) Zusätzliche Daten: Close-Werte, FRED-Daten, implizite Volatilität
     # ----------------------------------------------------------------
 
     #region Datensammlung von Yfinance-Daten : Close-Werte des angegebenen Index und implizite Volatilität
@@ -623,7 +634,7 @@ class PolygonApiClient:
 
     #endregion
 
-    #region Datensammlung von FRED-Daten : Sammelt Zins-Daten
+    #region Datensammlung von FRED-Daten: Sammelt Zins-Daten
     def fetch_fred_data(self, series_id):
         """
         Holt FRED-Daten für die angegebene Serie und speichert sie in der Datenbank.

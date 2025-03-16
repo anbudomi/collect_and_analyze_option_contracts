@@ -8,8 +8,10 @@ from abc import ABC, abstractmethod
 
 #region 1) Prepared-Datenbank
 def get_prepared_database_repository() -> 'PreparedDataRepository':
-    """Erstellt und gibt eine Instanz von PreparedDataRepository zurück.
-       Falls die DB bereits existiert, wird sie nicht gelöscht."""
+    """
+    Erstellt und gibt eine Instanz von PreparedDataRepository zurück.
+    Erstellt die DB, falls sie nicht existiert.
+    """
     prepared_db_filename = os.getenv('PREPARED_DB_FILENAME')
     prepared_db_path = os.getenv('PREPARED_DB_PATH')
 
@@ -27,7 +29,9 @@ class PreparedDatabaseRepository(ABC):
         ...
 
 class PreparedDataRepository(PreparedDatabaseRepository):
-    """Datenbankklasse für vorbereitete Optionsdaten."""
+    """
+    Datenbankklasse für vorbereitete Optionsdaten.
+    """
     def __init__(self, db_path):
         self.db_path = db_path
         self.connection = self.get_connection()
@@ -37,7 +41,9 @@ class PreparedDataRepository(PreparedDatabaseRepository):
         return sqlite3.connect(self.db_path)
 
     def prepared_data_migrate(self, index):
-        """Erstellt eine Tabelle für den angegebenen Index, falls sie nicht existiert."""
+        """
+        Erstellt eine Tabelle für den angegebenen Index, falls sie nicht existiert.
+        """
         table_name = f"prepared_{index.lower()}_data"
         self.cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {table_name} (
@@ -64,7 +70,9 @@ class PreparedDataRepository(PreparedDatabaseRepository):
         self.connection.commit()
 
     def bulk_insert(self, data, index):
-        """Führt einen Bulk-Insert für vorbereitete Daten aus."""
+        """
+        Führt einen Bulk-Insert für vorbereitete Daten aus.
+        """
         table_name = f"prepared_{index.lower()}_data"
         insert_query = f"""
             INSERT INTO {table_name} (
@@ -82,7 +90,9 @@ class PreparedDataRepository(PreparedDatabaseRepository):
             self.connection.rollback()
 
     def close(self):
-        """Schließt die Datenbankverbindung."""
+        """
+        Schließt die Datenbankverbindung.
+        """
         self.connection.close()
 #endregion
 
@@ -92,7 +102,10 @@ class PreparedDataRepository(PreparedDatabaseRepository):
 
 #region 2) Prefiltered-Datenbank
 def get_prefiltered_database_repository() -> 'PrefilteredDataRepository':
-    """Erstellt und gibt eine Instanz von PrefilteredDataRepository zurück. Erstellt die DB, falls sie nicht existiert."""
+    """
+    Erstellt und gibt eine Instanz von PrefilteredDataRepository zurück.
+    Erstellt die DB, falls sie nicht existiert.
+    """
     prefiltered_db_filename = os.getenv('PREFILTERED_DB_FILENAME')
     prefiltered_db_path = os.getenv('PREFILTERED_DB_PATH')
 
@@ -110,7 +123,9 @@ class PrefilteredDatabaseRepository(ABC):
         ...
 
 class PrefilteredDataRepository(PrefilteredDatabaseRepository):
-    """Datenbankklasse für vorgefilterte Optionsdaten."""
+    """
+    Datenbankklasse für vorgefilterte Optionsdaten.
+    """
     def __init__(self, db_path):
         self.db_path = db_path
         self.connection = self.get_connection()
@@ -120,7 +135,9 @@ class PrefilteredDataRepository(PrefilteredDatabaseRepository):
         return sqlite3.connect(self.db_path)
 
     def prefiltered_data_migrate(self, ticker):
-        """Erstellt eine Tabelle für den angegebenen Ticker, falls sie nicht existiert."""
+        """
+        Erstellt eine Tabelle für den angegebenen Ticker, falls sie nicht existiert.
+        """
         table_name = f"prefiltered_{ticker.lower()}_data"
         self.cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {table_name} (
@@ -149,7 +166,9 @@ class PrefilteredDataRepository(PrefilteredDatabaseRepository):
         self.connection.commit()
 
     def bulk_insert_prefiltered(self, data, ticker):
-        """Führt einen Bulk-Insert für vorgefilterte Daten in die Tabelle für den angegebenen Ticker aus."""
+        """
+        Führt einen Bulk-Insert für vorgefilterte Daten in die Tabelle für den angegebenen Ticker aus.
+        """
         table_name = f"prefiltered_{ticker.lower()}_data"
         insert_query = f"""
             INSERT INTO {table_name} (
@@ -168,7 +187,9 @@ class PrefilteredDataRepository(PrefilteredDatabaseRepository):
             self.connection.rollback()
 
     def close(self):
-        """Schließt die Datenbankverbindung."""
+        """
+        Schließt die Datenbankverbindung.
+        """
         self.connection.close()
 #endregion
 

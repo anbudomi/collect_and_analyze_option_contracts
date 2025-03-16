@@ -7,7 +7,7 @@ from data_collection.database import DatabaseType
 from data_analysis.datapreparer import DataPreparer
 from data_collection.api import PolygonApiClient
 from data_collection.database import get_collection_database_repository
-from data_analysis.database import get_prepared_database_repository, get_prefiltered_database_repository
+from data_analysis.analysis_database import get_prepared_database_repository, get_prefiltered_database_repository
 from data_analysis.dataanalyzer import DataAnalyzer
 import shutil
 
@@ -20,7 +20,9 @@ dotenv.load_dotenv()
 
 #region 1) Helfer-Funktionen und Logging
 def parse_boolean(value):
-    """Wandelt String in Boolean um."""
+    """
+    Wandelt String in Boolean um.
+    """
     if isinstance(value, bool):
         return value
     if value.lower() in ('true', 't', 'yes', 'y', '1'):
@@ -38,8 +40,6 @@ def setup_logging(log_level=logging.INFO):
       - archiv/               (Alte Logs)
       - YYYYMMDD_HHMM/        (Aktuelle Logs)
         - error_log.txt        (Allgemeine Fehler)
-        - api_spx_contracts.txt    (SPX Contracts-Fehler)
-        - api_ndx_contracts.txt    (NDX Contracts-Fehler)
     """
     script_dir = os.path.dirname(os.path.abspath(__file__))
     log_directory = os.path.join(script_dir, "error_logging")
@@ -85,7 +85,9 @@ def setup_logging(log_level=logging.INFO):
 
 # Mapping aus der .env einlesen und in Dicts umwandeln
 def parse_env_mapping(env_var):
-    """Liest eine Komma-separierte Mapping-Zeichenkette aus der .env und wandelt sie in ein Dict um."""
+    """
+    Liest eine Komma-separierte Mapping-Zeichenkette aus der .env und wandelt sie in ein Dict um.
+    """
     mapping = {}
     raw_mapping = os.getenv(env_var, "")
     if raw_mapping:
@@ -100,7 +102,6 @@ async def run_aggregates(client):
 #endregion
 
 def main():
-    """Hauptfunktion des Skripts."""
 
     #initiiert logger
     logger, current_log_folder = setup_logging()
@@ -310,6 +311,8 @@ def main():
             # ----------------------------------------------------------------
             # 3.1) Aufruf Datenvorbereitung
             # ----------------------------------------------------------------
+
+            #region 3.1) Aufruf Datenvorbereitung
             if parse_boolean(os.getenv('RUN_DATA_PREPARER')):
                 print(f"📈 Running DataPreparer für {index}...")
 
@@ -342,12 +345,15 @@ def main():
             indices = [idx.strip() for idx in indices if idx.strip()]
             data_analyzer = DataAnalyzer(
                 prepared_db_path=os.path.join(os.getenv("PREPARED_DB_PATH"), os.getenv("PREPARED_DB_FILENAME")),
-                indices = indices
+                indices = indices,
+                prefiltered_db_path = os.getenv("PREFILTERED_DB_PATH"),
+                prefiltered_db_name = os.getenv("PREFILTERED_DB_FILENAME")
             )
 
             data_analyzer.run_analysis_and_plotting()
 
         #endregion
+
     print("🎉 Alle Indizes wurden erfolgreich verarbeitet!")
     #endregion
 

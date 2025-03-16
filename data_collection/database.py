@@ -9,10 +9,10 @@ from tqdm import tqdm
 
 
 # ----------------------------------------------------------------
-# 1) Datenbank-Verwaltungsklassen (Abstrakt & Implementierung)
+# 1) Datenbank-Verwaltung (Implementierung)
 # ----------------------------------------------------------------
 
-#region 1) Datenbank-Verwaltungsklassen (Abstrakt & Implementierung)
+#region 1) Datenbank-Verwaltung (Implementierung)
 class DatabaseType(Enum):
     SQLITE = 'sqlite'
 
@@ -42,7 +42,9 @@ def get_collection_database_repository(type: DatabaseType) -> dict:
 
 #region 2) Abstrakte Klasse für Datenbank-Repositories
 class CollectionDatabaseRepository(ABC):
-    """Abstrakte Klasse für eine Datenbank-Schnittstelle zur Speicherung von Finanzdaten."""
+    """
+    Abstrakte Klasse für eine Datenbank-Schnittstelle zur Speicherung von Finanzdaten.
+    """
 
     @abstractmethod
     def collection_db_migrate(self):
@@ -86,12 +88,15 @@ class CollectionDatabaseRepository(ABC):
 
 #region 3) Implementierung der SQLite-Datenbank-Klasse
 class SqliteDatabaseRepository(CollectionDatabaseRepository):
-    """SQLite-Datenbank-Repository zur Speicherung von Finanzdaten."""
+    """
+    SQLite-Datenbank-Repository zur Speicherung von Finanzdaten.
+    """
 
     def __init__(self, filename):
         super().__init__()
         self.filename = filename
         self.connection = self.get_collection_database_connection()
+        self.batch_size = 100000
 
     # ----------------------------------------------------------------
     # 3.1) Verbindung & Initialisierung
@@ -105,7 +110,9 @@ class SqliteDatabaseRepository(CollectionDatabaseRepository):
         reraise=True
     )
     def get_collection_database_connection(self):
-        """Erstellt eine Verbindung zur SQLite-Datenbank mit Optimierungen."""
+        """
+        Erstellt eine Verbindung zur SQLite-Datenbank mit Optimierungen.
+        """
         conn = sqlite3.connect(self.filename, isolation_level=None, check_same_thread=False)
         c = conn.cursor()
         c.execute("PRAGMA synchronous = OFF")
@@ -114,7 +121,9 @@ class SqliteDatabaseRepository(CollectionDatabaseRepository):
         return conn
 
     def collection_db_migrate(self):
-        """Erstellt notwendige Tabellen für die Speicherung von Options- und Marktdaten."""
+        """
+        Erstellt notwendige Tabellen für die Speicherung von Options- und Marktdaten.
+        """
         try:
             c = self.connection.cursor()
 
@@ -280,12 +289,10 @@ class SqliteDatabaseRepository(CollectionDatabaseRepository):
         """
 
         try:
-            batch_size = 100000
-            num_batches = (len(contracts_list) // batch_size) + (1 if len(contracts_list) % batch_size else 0)
 
-            for batch_start in tqdm(range(0, len(contracts_list), batch_size), desc="Batch-Insert in contracts",
+            for batch_start in tqdm(range(0, len(contracts_list), self.batch_size), desc="Batch-Insert in contracts",
                                     unit="batch"):
-                batch = contracts_list[batch_start: batch_start + batch_size]
+                batch = contracts_list[batch_start: batch_start + self.batch_size]
 
                 # **Konvertiere `None`-Werte & Datentypen für SQLite**
                 data_tuples = [
@@ -322,7 +329,7 @@ class SqliteDatabaseRepository(CollectionDatabaseRepository):
     def insert_contract_aggregates_bulk(self, aggregates_list):
         """
         Optimierter Bulk-Insert für Contract-Aggregate-Daten in SQLite.
-        - Nutzt große Batches (10.000)
+        - Nutzt große Batches (100.000)
         - Verwendet explizite Transaktionen (`BEGIN TRANSACTION` & `COMMIT`)
         - Konvertiert alle Daten in kompatible Typen (keine None-Werte)
         - Nutzt `PRAGMA`-Optimierungen für schnelles Schreiben
@@ -353,13 +360,11 @@ class SqliteDatabaseRepository(CollectionDatabaseRepository):
         """
 
         try:
-            batch_size = 100000  # Setze die Batch-Größe auf 100.000 für maximale Effizienz
-            num_batches = (len(aggregates_list) // batch_size) + (1 if len(aggregates_list) % batch_size else 0)
 
-            for batch_start in tqdm(range(0, len(aggregates_list), batch_size),
+            for batch_start in tqdm(range(0, len(aggregates_list), self.batch_size),
                                     desc="Batch-Insert in contract_aggregates",
                                     unit="batch"):
-                batch = aggregates_list[batch_start: batch_start + batch_size]
+                batch = aggregates_list[batch_start: batch_start + self.batch_size]
 
                 # **Konvertiere `None`-Werte & Datentypen für SQLite**
                 data_tuples = [
@@ -389,8 +394,8 @@ class SqliteDatabaseRepository(CollectionDatabaseRepository):
 
     def aggregate_exists(self, ticker, from_date, to_date):
         """
-        Checks if there's at least one entry for 'ticker' in 'contract_aggregates'
-        within the given date range.
+        Überprüft, ob mindestens ein Eintrag in der Tabelle "contract_aggregates" vorhanden ist,
+        für einen bestimmten "contract_ticker" und einen Zeitraum.
         """
         c = self.connection.cursor()
         c.execute("""
@@ -606,12 +611,14 @@ class SqliteDatabaseRepository(CollectionDatabaseRepository):
     #endregion
 
     # ----------------------------------------------------------------
-    # 3.5) Hilfsfunktionen für Errorhandling
+    # 3.5) Helfer-Funktionen
     # ----------------------------------------------------------------
 
-    #region 3.5) Hilfsfunktionen für Errorhandling
+    #region 3.5) Helfer-Funktion
     def count_contracts(self):
-        """Zählt die Anzahl der Einträge in der Contracts-Tabelle."""
+        """
+        Zählt die Anzahl der Einträge in der Contracts-Tabelle.
+        """
         query = "SELECT COUNT(*) FROM contracts"
         c = self.connection.cursor()
         c.execute(query)
@@ -619,7 +626,9 @@ class SqliteDatabaseRepository(CollectionDatabaseRepository):
         return count
 
     def count_aggregates(self):
-        """Zählt die Anzahl der Einträge in der contract_aggregates-Tabelle."""
+        """
+        Zählt die Anzahl der Einträge in der contract_aggregates-Tabelle.
+        """
         query = "SELECT COUNT(*) FROM contract_aggregates"
         c = self.connection.cursor()
         c.execute(query)

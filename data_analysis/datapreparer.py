@@ -64,7 +64,6 @@ class DataPreparer:
         put_query_all = f"SELECT * FROM {table_name} WHERE contract_type = 'put'"
         put_rows = cursor.execute(put_query_all).fetchall()
 
-        # Baue ein Dictionary für schnellen Zugriff.
         # Schlüssel: (underlying_ticker, execution_price, remaining_days, base_ticker)
         put_dict = {}
         for row in put_rows:
@@ -86,7 +85,6 @@ class DataPreparer:
         printed_pairs_count = 0
 
         for call_row in call_rows:
-            # Annahme: Spaltenreihenfolge entspricht der CREATE TABLE-Reihenfolge:
             # 0: id, 1: ticker, 2: underlying_ticker, 3: date, 4: contract_type,
             # 5: expiration_date, 6: remaining_days, 7: remaining_time, 8: execution_price,
             # 9: market_price_base, 10: market_price_option, 11: implied_vola_percent,
@@ -222,7 +220,6 @@ class DataPreparer:
             contract_ticker, date_str, market_price_option = ca
 
             # Finde passenden Eintrag in contracts anhand von contract_ticker und date.
-            # Hier holen wir auch strike_price, der als execution_price verwendet werden soll.
             raw_cursor.execute("""
                 SELECT underlying_ticker, contract_type, expiration_date, strike_price
                 FROM contracts
@@ -321,9 +318,9 @@ class DataPreparer:
 
         Parameter:
           contract_type: 'call' oder 'put'
-          S: Underlying-Preis (market_price_base)
+          S: Marktpreis Basiswert (Index)
           K: Strike-Price (aus contracts.strike_price)
-          r: Risikofreier Zinssatz (risk_free_rate)
+          r: Risk Free Rate (aus contracts.risk_free_rate)
           q: Dividendenrendite (dividend_yield)
           sigma: Implizite Volatilität (in Dezimal, z. B. 0.20 für 20%)
           T: Verbleibende Zeit in Jahren (z. B. 0.25)
@@ -351,7 +348,7 @@ class DataPreparer:
         elif contract_type.lower() == "put":
             price = K * math.exp(-r * T) * N(-d2) - S * math.exp(-q * T) * N(-d1)
         else:
-            # Fallback: Standardmäßig Call-Berechnung
+            # Fallback:
             print("Weder call noch put gefunden")
             price = -100.0          # Um Fehler festzustellen, unrealistischen Wert einfügen
 
@@ -365,11 +362,7 @@ class DataPreparer:
     #region 4) Berechnung für Dividend Yield
     def get_nearest_value(self, data_dict, target_date_str, max_offset=10):
         """
-        Sucht in data_dict (Mapping date -> Wert) nach target_date_str.
-        Falls das Datum existiert, wird auch überprüft, ob der zugehörige Wert ungleich 0 ist.
-        Falls nicht, wird in 1-Tages-Schritten (zunächst rückwärts, dann vorwärts)
-        nach einem Datum gesucht, dessen Wert nicht 0 ist.
-        Gibt None zurück, falls innerhalb von max_offset Tagen kein gültiger Wert gefunden wird.
+        Sucht den nächsten validen Wert. (In 1-Tages Schritten vor und zurück)
         """
         if target_date_str in data_dict and data_dict[target_date_str] != 0:
             return data_dict[target_date_str]
@@ -389,9 +382,8 @@ class DataPreparer:
 
     def get_dividend_yield(self, perf_index_data, price_index_data, current_date_str, trade_date):
         """
-        Berechnet die Dividendenrendite:
-        div_yield = ( (Perf_current / Perf_prev) / (Price_current / Price_prev) ) - 1
-        Falls Daten für das Ziel- oder das Vorjahrsdatum nicht gefunden werden, wird 0.0 zurückgegeben.
+        Berechnet die Dividendenrendite, nach folgender Formel:
+        (Performance Index aktuell / Performance Index vor einem Jahr) / (Aktueller Preis Index / Preis Index vor einem Jahr)
         """
         prev_year_date_str = (trade_date - timedelta(days=365)).strftime("%Y-%m-%d")
         perf_current = self.get_nearest_value(perf_index_data, current_date_str)
